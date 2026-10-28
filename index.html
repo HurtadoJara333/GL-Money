@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#050505">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GL Money">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+<title>GL Money</title>
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<main id="app">
+  <section id="v-home" class="view on"></section>
+  <section id="v-loans" class="view"></section>
+  <section id="v-map" class="view">
+    <div id="map"></div>
+    <div id="mapTop"></div>
+    <div id="routeDrawer"></div>
+  </section>
+  <section id="v-notes" class="view"></section>
+</main>
+
+<nav id="dock">
+  <div class="dock-pill glass" id="dockPill">
+    <button data-a="tab" data-t="home" class="on"><span class="ico" data-i="home"></span><b>Inicio</b></button>
+    <button data-a="tab" data-t="loans"><span class="ico" data-i="wallet"></span><b>Créditos</b></button>
+    <button data-a="tab" data-t="map"><span class="ico" data-i="map"></span><b>Mapa</b></button>
+    <button data-a="tab" data-t="notes"><span class="ico" data-i="note"></span><b>Notas</b></button>
+  </div>
+  <button id="fab" class="fab glass" data-a="fab" aria-label="Agregar"><span class="ico" data-i="plus"></span></button>
+</nav>
+
+<div id="sheets"></div>
+<div id="toast"></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
