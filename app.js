@@ -786,6 +786,11 @@ function renderInv() {
     v.innerHTML = `<div class="hd"><div><small>Egresos de la tienda</small><h1>Gastos</h1></div></div>${ownerBadge()}
     <div class="hero glass tint-bad"><div class="lbl">Total de gastos</div><div class="big num">${m0(k.gastos)}</div><div class="sub"><span>Este mes ${m0(k.gastosMes)}</span><span>${S.expenses.length} registro${S.expenses.length === 1 ? '' : 's'}</span></div></div>
     <div class="btns inv-act"><button class="btn pri" data-a="new-exp">${ico('plus')} Nuevo gasto</button></div>
+    <div class="panel glass" style="margin-top:14px"><h4><span>Envío desde EE.UU.</span><em>se reparte por prenda</em></h4>
+      <div class="two"><label class="field"><span>Valor total del envío</span><input id="envTotal" type="number" min="0" step="any" inputmode="decimal" value="${+S.set.envioTotal || 0}"></label>
+      <label class="field"><span>Prendas traídas en el envío</span><input id="envCant" type="number" min="0" step="1" inputmode="numeric" value="${+S.set.envioCant || 0}"></label></div>
+      <p class="hint">Cada prenda nueva sumará <b style="color:var(--gold1)">${m2(envioUnit())}</b> de envío a su costo unitario.</p>
+      <button class="btn sm" data-a="save-envio">${ico('check')} Guardar envío</button></div>
     <div class="list" style="margin-top:14px">${S.expenses.length ? S.expenses.slice().sort((a, b) => b.fecha.localeCompare(a.fecha)).map(e => `<button class="row glass" data-a="exp" data-id="${e.id}"><div class="avatar">${ico('coin')}</div><div class="mid"><div class="t">${esc(e.descripcion || 'Gasto')}</div><div class="s">${esc(e.categoria || 'Otro')} · ${fmtD(new Date(e.fecha))}</div></div><div class="r"><b class="num" style="color:var(--bad)">-${m0(e.valor)}</b></div></button>`).join('') : empty('coin', 'Aún no hay gastos.<br>Toca + para registrar el primero.')}</div>`;
   }
 }
@@ -814,11 +819,6 @@ function invResumenHTML() {
     <div class="kpi glass"><div class="lbl">Pagos por confirmar</div><div class="val num" style="${porConf.length ? 'color:var(--warn)' : ''}">${porConf.length}</div><small>${m0(sum(porConf, s => s.total))}</small></div>
   </div>
   <div class="btns inv-act"><button class="btn pri" data-a="vender">${ico('cart')} Vender</button><button class="btn" data-a="new-prod">${ico('shirt')} Prenda</button><button class="btn" data-a="new-exp">${ico('coin')} Gasto</button></div>
-  <div class="panel glass"><h4><span>Envío desde EE.UU.</span><em>se reparte por prenda</em></h4>
-    <div class="two"><label class="field"><span>Valor total del envío</span><input id="envTotal" type="number" min="0" step="any" inputmode="decimal" value="${+S.set.envioTotal || 0}"></label>
-    <label class="field"><span>Prendas traídas en el envío</span><input id="envCant" type="number" min="0" step="1" inputmode="numeric" value="${+S.set.envioCant || 0}"></label></div>
-    <p class="hint">Cada prenda nueva sumará <b style="color:var(--gold1)">${m2(envioUnit())}</b> de envío a su costo unitario.</p>
-    <button class="btn sm" data-a="save-envio">${ico('check')} Guardar envío</button></div>
   <div class="panel glass"><h4><span>Ganancia · 7 días</span><em class="num">${m0(wsum)}</em></h4>
     <div class="chart">${wk.map((x, i) => `<div class="col ${x.v ? '' : 'z'} ${i === 6 ? 't' : ''}"><div class="chart-v num">${x.v ? m0(x.v) : ''}</div><i style="height:${x.v ? Math.max(6, x.v / wmax * 62) : 3}px"></i><span>${i === 6 ? 'Hoy' : dias[x.d.getDay()]}</span></div>`).join('')}</div></div>
   ${low.length ? `<div class="panel glass tint-bad"><h4><span>⚠ Stock por agotarse</span><em>${low.length} prendas</em></h4>${low.map(p => `<div class="prow" data-a="prod" data-id="${p.id}"><div class="pi">${ico('shirt')}</div><div class="pm"><b>${esc(p.nombre)}</b><small>Talla ${esc(p.talla || 'Única')} · aviso ≤ ${stockMin(p) || 0}</small></div><div class="pv" style="color:${isOut(p) ? 'var(--bad)' : 'var(--warn)'}">${p.cantidad} und.${isOut(p) ? ' · Agotado' : ''}</div></div>`).join('')}</div>` : ''}
