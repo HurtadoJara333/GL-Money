@@ -65,7 +65,7 @@ const SYNC_STORES = ['clients', 'loans', 'payments', 'notes', 'places', 'product
 let db = null;
 const S = {
   clients: [], loans: [], payments: [], notes: [], places: [], products: [], sales: [], expenses: [],
-  set: { negocio: 'GL Money', tel: '', pin: '' }, ruta: [],
+  set: { negocio: 'GL Money', tel: '', pin: '', stockMin: 3 }, ruta: [],
   sync: { outbox: {}, last: null, state: 'nosession' },
   ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', ownerUntil: 0 }
 };
@@ -94,12 +94,12 @@ async function save(store, obj) {
   const a = S[store], i = a.findIndex(x => x.id === obj.id);
   if (i >= 0) a[i] = obj; else a.push(obj);
   try { await dbPut(store, obj); } catch (e) { console.error(e); toast('Error al guardar'); }
-  queue(store, obj.id, false, obj.u);
+  await queue(store, obj.id, false, obj.u);
 }
 async function remove(store, id) {
   S[store] = S[store].filter(x => x.id !== id);
   try { await dbDel(store, id); } catch (e) { console.error(e); }
-  queue(store, id, true, Date.now());
+  await queue(store, id, true, Date.now());
 }
 const saveMeta = () => Promise.all([
   dbPut('meta', { id: 'settings', ...S.set }), dbPut('meta', { id: 'ruta', keys: S.ruta })
@@ -161,7 +161,7 @@ const enriched = () => S.loans.map(l => ({ l, c: calc(l), cl: client(l.clientId)
 const INV_TABS = ['inv-res', 'inv-prod', 'inv-vent', 'inv-gast'];
 const isInvTab = t => INV_TABS.includes(t);
 const TALLAS = ['Única', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42'];
-const CATS = ['Camisas', 'Pantalones', 'Vestidos', 'Jeans', 'T-shirts', 'Sudaderas', 'Chaquetas', 'Zapatos', 'Accesorios', 'Niños', 'Otro'];
+const CATS = ['Camisas', 'Camisetas', 'Camibuzos', 'Buzos', 'Sudaderas', 'Gorras', 'Pantalones', 'Jeans', 'Vestidos', 'T-shirts', 'Chaquetas', 'Zapatos', 'Accesorios', 'Niños', 'Otro'];
 const invoiceChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function genInvoice(date) {
   const d = date || new Date();
@@ -172,6 +172,12 @@ function genInvoice(date) {
   }
 }
 const salePend = s => Math.max(0, (+s.total || 0) - (+s.abonado || 0));
+/* aviso de stock: umbral global y umbral por prenda */
+const defaultMin = () => S.set.stockMin == null ? 3 : Math.max(0, +S.set.stockMin || 0);
+const stockMin = p => p && p.min != null ? Math.max(0, +p.min || 0) : defaultMin();
+const isOut = p => (+p.cantidad || 0) <= 0;
+const isLow = p => !isOut(p) && (+p.cantidad || 0) <= stockMin(p);
+const lowProducts = () => S.products.filter(p => isOut(p) || isLow(p)).sort((a, b) => (+a.cantidad || 0) - (+b.cantidad || 0) || a.nombre.localeCompare(b.nombre));
 function invStats() {
   const p = S.products, sv = S.sales, ex = S.expenses, today = new Date();
   const inMonth = d => { const x = new Date(d); return x.getMonth() === today.getMonth() && x.getFullYear() === today.getFullYear(); };
@@ -192,7 +198,7 @@ function invStats() {
     pendiente: sum(sv.filter(s => s.estado === 'pendiente'), salePend),
     nPend: sv.filter(s => s.estado === 'pendiente').length,
     gastos, gastosMes: sum(ex.filter(e => inMonth(e.fecha)), e => +e.valor || 0),
-    margen: valorVenta ? esperada / valorVenta * 100 : 0, categ
+    margen: valorVenta ? esperada / valorVenta * 100 : 0, categ, bajo: lowProducts().length, agotados: S.products.filter(isOut).length
   };
 }
 /* acceso de dueño: se activa con el PIN de ajustes y dura 30 min */
@@ -708,6 +714,7 @@ function invResumenHTML() {
   const wmax = Math.max(1, ...wk.map(x => x.v)), wsum = sum(wk, x => x.v);
   const cats = Object.entries(k.categ).sort((a, b) => b[1].v - a[1].v);
   const ult = S.sales.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 4);
+  const low = lowProducts();
   const il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
   return `<div class="hd"><div><small>Dos apps en una · cobros e inventario separados</small><h1>Inventario</h1></div><button class="icon-btn glass" data-a="owner" aria-label="Acceso dueño">${ico(String(S.set.pin || '').trim() && ownerActive() ? 'shield' : 'lock')}</button></div>
   ${ownerBadge()}
@@ -721,16 +728,18 @@ function invResumenHTML() {
     <div class="kpi glass"><div class="lbl">Ganancia realizada</div><div class="val num">${m0(k.realizada)}</div><small>${S.sales.length} ventas</small></div>
     <div class="kpi glass"><div class="lbl">Ganancia neta</div><div class="val num" style="${k.neta < 0 ? 'color:var(--bad)' : ''}">${m0(k.neta)}</div><small> menos gastos</small></div>
     <div class="kpi glass"><div class="lbl">Ventas por cobrar</div><div class="val num">${k.nPend}</div><small>facturas abiertas</small></div>
+    <div class="kpi glass"><div class="lbl">Stock por agotarse</div><div class="val num" style="${low.length ? 'color:var(--warn)' : ''}">${low.length}</div><small>${k.agotados} agotados</small></div>
   </div>
   <div class="btns inv-act"><button class="btn pri" data-a="vender">${ico('cart')} Vender</button><button class="btn" data-a="new-prod">${ico('shirt')} Prenda</button><button class="btn" data-a="new-exp">${ico('coin')} Gasto</button></div>
   <div class="panel glass"><h4><span>Ganancia · 7 días</span><em class="num">${m0(wsum)}</em></h4>
     <div class="chart">${wk.map((x, i) => `<div class="col ${x.v ? '' : 'z'} ${i === 6 ? 't' : ''}"><div class="chart-v num">${x.v ? m0(x.v) : ''}</div><i style="height:${x.v ? Math.max(6, x.v / wmax * 62) : 3}px"></i><span>${i === 6 ? 'Hoy' : dias[x.d.getDay()]}</span></div>`).join('')}</div></div>
+  ${low.length ? `<div class="panel glass tint-bad"><h4><span>⚠ Stock por agotarse</span><em>${low.length} prendas</em></h4>${low.map(p => `<div class="prow" data-a="prod" data-id="${p.id}"><div class="pi">${ico('shirt')}</div><div class="pm"><b>${esc(p.nombre)}</b><small>Talla ${esc(p.talla || 'Única')} · aviso ≤ ${stockMin(p) || 0}</small></div><div class="pv" style="color:${isOut(p) ? 'var(--bad)' : 'var(--warn)'}">${p.cantidad} und.${isOut(p) ? ' · Agotado' : ''}</div></div>`).join('')}</div>` : ''}
   <div class="panel glass"><h4><span>Categorización</span><em>${cats.length} categorías</em></h4>
     ${cats.length ? cats.map(([name, v]) => `<div class="prow" data-a="inv-cat" data-c="${esc(name)}"><div class="pi">${esc(name[0].toUpperCase())}</div><div class="pm"><b>${esc(name)}</b><small>${v.n} prenda${v.n === 1 ? '' : 's'} · ${v.u} unidades</small></div><div class="pv g num">${m0(v.v)}</div></div>`).join('') : empty('box', 'Sin productos clasificados.')}</div>
   ${ult.length ? `<div class="panel glass"><h4><span>Últimas ventas</span><em>${S.sales.length} en total</em></h4>${ult.map(s => `<div class="prow" data-a="sale" data-id="${s.id}"><div class="pi">${ico('receipt')}</div><div class="pm"><b>${esc(s.factura)}</b><small>${fmtS(new Date(s.fecha))} · ${esc(s.metodo)} · ${esc(s.cliente || 'Sin cliente')}</small></div><div class="pv num">${m0(s.total)}</div></div>`).join('')}</div>` : ''}
   <div class="quote"><b>GL</b> Inventario · ventas y stock en un solo lugar</div>`;
 }
-const invProdRow = p => `<button class="row glass" data-a="prod" data-id="${p.id}"><div class="avatar">${ico('shirt')}</div><div class="mid"><div class="t">${esc(p.nombre)}</div><div class="s">${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')} · ${p.cantidad} und.</div></div><div class="r"><b class="num">${m0(p.precio)}</b><small>costo ${m0(p.costo)}</small><span class="chip ok">+${m0((+p.precio - +p.costo) * (+p.cantidad || 0))}</span></div></button>`;
+const invProdRow = p => `<button class="row glass" data-a="prod" data-id="${p.id}"><div class="avatar">${ico('shirt')}</div><div class="mid"><div class="t">${esc(p.nombre)}</div><div class="s">${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')} · ${p.cantidad} und.</div></div><div class="r"><b class="num">${m0(p.precio)}</b><small>costo ${m0(p.costo)}</small><span class="chip ok">+${m0((+p.precio - +p.costo) * (+p.cantidad || 0))}</span>${isOut(p) ? '<span class="chip bad">Agotado</span>' : isLow(p) ? '<span class="chip warn">Stock bajo</span>' : ''}</div></button>`;
 function renderProdList() {
   const seg = $('#invCatSeg'), list = $('#invProdList'); if (!seg || !list) return;
   const cats = [...new Set(S.products.map(p => p.categoria || 'General'))].sort();
@@ -750,13 +759,15 @@ function renderSaleList() {
 
 /* ---- prendas ---- */
 function openProductForm(id) {
-  const base = id ? S.products.find(p => p.id === id) : { categoria: 'Camisas', talla: 'M', cantidad: 1, costo: 0, precio: 0 };
+  const base = id ? S.products.find(p => p.id === id) : { categoria: 'Camisas', talla: 'M', cantidad: 1, costo: 0, precio: 0, min: defaultMin() };
   if (!base) return;
   const el = sheet(id ? 'Editar prenda' : 'Nueva prenda', `<form id="pform">
     <label class="field"><span>Prenda</span><input name="nombre" required autocomplete="off" placeholder="Ej: Camisa Oxford blanca" value="${esc(base.nombre || '')}"></label>
     <label class="field"><span>Categoría</span><input name="categoria" list="catList" autocomplete="off" value="${esc(base.categoria || '')}"><datalist id="catList">${[...new Set([...CATS, ...S.products.map(p => p.categoria)])].filter(Boolean).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
     <div class="two"><label class="field"><span>Talla</span><input name="talla" list="tallaList" value="${esc(base.talla || 'Única')}"></label>
     <label class="field"><span>Cantidad</span><input name="cantidad" id="pa" type="number" inputmode="numeric" min="0" step="1" value="${base.cantidad || 0}"></label></div>
+    <label class="field"><span>Avisar cuando queden ≤</span><input name="min" id="pm" type="number" inputmode="numeric" min="0" step="1" value="${base.min != null ? base.min : defaultMin()}"></label>
+    <p class="hint">Al llegar a ese número avisará en el resumen y al hacer una venta. 0 = solo avisar si se agota.</p>
     <datalist id="tallaList">${TALLAS.map(t => `<option value="${t}">`).join('')}</datalist>
     <div class="two"><label class="field"><span>Valor de costo del producto</span><input name="costo" id="pc" type="number" inputmode="decimal" min="0" step="any" value="${base.costo || 0}"></label>
     <label class="field"><span>Precio final al cliente</span><input name="precio" id="pp" type="number" inputmode="decimal" min="0" step="any" value="${base.precio || 0}"></label></div>
@@ -769,7 +780,7 @@ function openProductForm(id) {
   f.addEventListener('submit', async e => {
     e.preventDefault(); const fd = new FormData(f);
     const nombre = String(fd.get('nombre') || '').trim(); if (!nombre) return toast('Escribe el nombre de la prenda');
-    const p = { ...base, id: base.id || uid(), nombre, categoria: String(fd.get('categoria') || '').trim() || 'General', talla: String(fd.get('talla') || '').trim() || 'Única', cantidad: Math.max(0, Math.floor(+fd.get('cantidad') || 0)), costo: +fd.get('costo') || 0, precio: +fd.get('precio') || 0, nota: String(fd.get('nota') || '').trim() };
+    const p = { ...base, id: base.id || uid(), nombre, categoria: String(fd.get('categoria') || '').trim() || 'General', talla: String(fd.get('talla') || '').trim() || 'Única', cantidad: Math.max(0, Math.floor(+fd.get('cantidad') || 0)), min: Math.max(0, Math.floor(+fd.get('min') || 0)), costo: +fd.get('costo') || 0, precio: +fd.get('precio') || 0, nota: String(fd.get('nota') || '').trim() };
     if (p.precio < p.costo) return toast('El precio no puede ser menor al costo');
     await save('products', p); closeSheet(el); refreshAll(); toast(id ? 'Prenda actualizada' : 'Prenda agregada');
   });
@@ -778,8 +789,8 @@ function openProduct(id) {
   const el = sheet('Prenda', () => {
     const p = S.products.find(x => x.id === id); if (!p) return '';
     const il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
-    return `<div class="head-c"><div class="avatar lg">${ico('shirt')}</div><div style="flex:1"><h3>${esc(p.nombre)}</h3><p>${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')}</p></div><span class="chip ${p.cantidad > 0 ? 'ok' : 'bad'}">${p.cantidad} und.</span></div>
-    <div class="stmt glass">${il('Valor de costo', m2(p.costo))}${il('Precio final al cliente', m2(p.precio))}${il('Ganancia por unidad', m2(+p.precio - +p.costo))}${il('Valor en inventario', m2((+p.precio) * (+p.cantidad || 0)))}${il('Ganancia esperada', m2((+p.precio - +p.costo) * (+p.cantidad || 0)))}${p.nota ? il('Nota', esc(p.nota)) : ''}</div>
+    return `<div class="head-c"><div class="avatar lg">${ico('shirt')}</div><div style="flex:1"><h3>${esc(p.nombre)}</h3><p>${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')}</p></div><span class="chip ${isOut(p) ? 'bad' : isLow(p) ? 'warn' : 'ok'}">${p.cantidad} und.${isOut(p) ? ' · Agotado' : isLow(p) ? ' · Stock bajo' : ''}</span></div>
+    <div class="stmt glass">${il('Valor de costo', m2(p.costo))}${il('Precio final al cliente', m2(p.precio))}${il('Ganancia por unidad', m2(+p.precio - +p.costo))}${il('Valor en inventario', m2((+p.precio) * (+p.cantidad || 0)))}${il('Ganancia esperada', m2((+p.precio - +p.costo) * (+p.cantidad || 0)))}${il('Aviso de stock', stockMin(p) ? '≤ ' + stockMin(p) + ' und.' : 'Solo si se agota')}${p.nota ? il('Nota', esc(p.nota)) : ''}</div>
     <div class="btns"><button class="btn pri sm" data-a="edit-prod" data-id="${p.id}">${ico('edit')} Editar</button><button class="btn danger sm" data-a="del-prod" data-id="${p.id}">${ico('trash')} Eliminar</button></div>
     <h3 class="sec"><span>Reponer stock</span></h3><form class="btns" data-stock="${p.id}"><input class="field" name="q" type="number" min="1" step="1" value="1" style="flex:1;margin:0;border-radius:99px;padding:12px 16px"><button class="btn ok" type="submit">${ico('plus')} Añadir</button></form>`;
   }, { full: true });
@@ -853,7 +864,9 @@ function openSaleForm() {
     const snap = items.map(it => { const p = prods.find(x => x.id === it.pid); return { productId: it.pid, nombre: p ? p.nombre : '—', categoria: p ? p.categoria : '', talla: it.talla, cant: it.cant, costo: it.costo, precio: it.precio }; });
     const s = { id: uid(), factura, fecha: new Date(fd.get('fecha')).toISOString(), cliente: String(fd.get('cliente') || '').trim(), metodo, items: snap, total: t.total, costoTotal: t.total - t.ganancia, ganancia: t.ganancia, estado: credito ? 'pendiente' : 'pagado', abonado: credito ? 0 : t.total, u: Date.now() };
     for (const [pid, q] of Object.entries(need)) { const p = S.products.find(x => x.id === pid); p.cantidad = (+p.cantidad || 0) - q; await save('products', p); }
-    await save('sales', s); closeSheet(el); refreshAll(); toast('Venta registrada');
+    const aviso = Object.keys(need).map(pid => S.products.find(x => x.id === pid)).filter(p => p && (isLow(p) || isOut(p)));
+    await save('sales', s); closeSheet(el); refreshAll();
+    toast(aviso.length ? `Venta registrada · ⚠ Stock bajo: ${aviso.map(p => `${p.nombre} (${p.cantidad})`).join(', ')}` : 'Venta registrada');
     setTimeout(() => openSale(s.id), 350);
   });
 }
@@ -895,7 +908,7 @@ function openExpenseForm(id) {
   if (!base) return;
   const el = sheet(id ? 'Editar gasto' : 'Nuevo gasto', `<form id="eform">
     <label class="field"><span>Descripción</span><input name="descripcion" required autocomplete="off" placeholder="Ej: Arriendo del local" value="${esc(base.descripcion || '')}"></label>
-    <div class="two"><label class="field"><span>Categoría</span><select name="categoria">${['Compra de mercancía', 'Arriendo', 'Transporte', 'Servicios', 'Publicidad', 'Otro'].map(c => `<option ${c === base.categoria ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+    <div class="two"><label class="field"><span>Categoría</span><select name="categoria">${['Compra de mercancía', 'Envío', 'Publicidad', 'Arriendo', 'Transporte', 'Servicios', 'Otro'].map(c => `<option ${c === base.categoria ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
     <label class="field"><span>Valor</span><input name="valor" type="number" inputmode="decimal" min="0" step="any" required value="${base.valor || ''}"></label></div>
     <label class="field"><span>Fecha</span><input name="fecha" type="date" required value="${base.fecha}"></label>
     <button class="btn pri blk" type="submit">${ico('check')} Guardar gasto</button></form>`, { full: true });
@@ -1063,12 +1076,14 @@ function openVerify() {
 function openSettings() {
   const el = sheet('Ajustes', `<form id="sf"><label class="field"><span>Nombre del negocio (aparece en recibos)</span><input name="negocio" value="${esc(S.set.negocio)}"></label><label class="field"><span>Teléfono para comprobantes</span><input name="tel" type="tel" value="${esc(S.set.tel)}"></label>
   <label class="field"><span>PIN de dueño (protege Vender y cambios de inventario)</span><input name="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="Sin PIN = acceso libre" value="${esc(S.set.pin || '')}"></label>
-  <p class="hint">Si dejas el PIN vacío, cualquier persona que tenga la app podrá vender y modificar el inventario.</p><button class="btn pri blk" type="submit">${ico('check')} Guardar</button></form>
+  <p class="hint">Si dejas el PIN vacío, cualquier persona que tenga la app podrá vender y modificar el inventario.</p>
+  <label class="field"><span>Avisar stock bajo cuando queden ≤</span><input name="stockMin" type="number" inputmode="numeric" min="0" step="1" value="${defaultMin()}"></label>
+  <p class="hint">Aviso por defecto para las prendas nuevas (0 = solo avisar cuando se agoten). Puedes ajustarlo por prenda.</p><button class="btn pri blk" type="submit">${ico('check')} Guardar</button></form>
   <h3 class="sec"><span>Cuenta y nube</span></h3>${accountHTML()}
   <h3 class="sec"><span>Respaldo</span></h3><p class="hint">Exporta un respaldo de vez en cuando, además de la nube (incluye fotos).</p>
   <div class="btns"><button class="btn" data-k="exp">${ico('dl')} Exportar</button><label class="btn">${ico('share')} Importar<input type="file" accept="application/json" hidden data-k="imp"></label></div>
   <div class="btns" style="margin-top:10px"><button class="btn danger" data-k="wipe">${ico('trash')} Borrar todos los datos</button></div>`);
-  $('#sf', el).addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.target); S.set.negocio = String(f.get('negocio')).trim() || 'GL Money'; S.set.tel = String(f.get('tel')).trim(); S.set.pin = String(f.get('pin') || '').trim(); S.set.u = Date.now(); await saveMeta(); queue('meta', 'settings', false, S.set.u); if (!S.set.pin) S.ui.ownerUntil = 0; closeSheet(el); refreshAll(); toast('Guardado'); });
+  $('#sf', el).addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.target); S.set.negocio = String(f.get('negocio')).trim() || 'GL Money'; S.set.tel = String(f.get('tel')).trim(); S.set.pin = String(f.get('pin') || '').trim(); S.set.stockMin = Math.max(0, Math.floor(+f.get('stockMin') || 0)); S.set.u = Date.now(); await saveMeta(); queue('meta', 'settings', false, S.set.u); if (!S.set.pin) S.ui.ownerUntil = 0; closeSheet(el); refreshAll(); toast('Guardado'); });
   el.addEventListener('click', async e => {
     const b = e.target.closest('button[data-k]'); if (!b) return;
     if (b.dataset.k === 'exp') {
@@ -1092,7 +1107,7 @@ function openSettings() {
       const d = JSON.parse(await f.text()); if (d.app !== 'cobroEmpire') throw 0;
       if (!await ask('Esto reemplazará los datos actuales por el respaldo.', 'Importar')) return;
       for (const s of SYNC_STORES) { await dbClear(s).catch(() => { }); S[s] = d[s] || []; for (const o of S[s]) { o.u = Date.now(); await dbPut(s, o); queue(s, o.id, false, o.u); } }
-      S.set = { negocio: 'GL Money', tel: '', pin: '', ...(d.set || {}) }; S.ruta = d.ruta || []; S.ui.ownerUntil = 0; await saveMeta(); closeSheet(el); refreshAll(); toast('Respaldo importado');
+      S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, ...(d.set || {}) }; S.ruta = d.ruta || []; S.ui.ownerUntil = 0; await saveMeta(); closeSheet(el); refreshAll(); toast('Respaldo importado');
     } catch { toast('Archivo no válido'); }
   });
 }
@@ -1213,11 +1228,15 @@ async function rest(path, opts = {}) {
 }
 const persistSync = () => dbPut('meta', { id: 'sync', outbox: S.sync.outbox, last: S.sync.last }).catch(() => { });
 let syncTimer, syncing = false;
-function queue(store, id, del, u) { S.sync.outbox[store + '/' + id] = { store, id, del: !!del, u }; persistSync(); if (session()) { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(), 2500); } }
+async function queue(store, id, del, u) {
+  S.sync.outbox[store + '/' + id] = { store, id, del: !!del, u };
+  await persistSync(); // la cola se graba en IndexedDB antes de seguir: aunque se cierre la app, el cambio no se pierde
+  if (session()) { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(), 2500); }
+}
 const syncLabel = () => { const n = Object.keys(S.sync.outbox).length, st = S.sync.state; const t = st === 'nosession' ? 'sin nube' : st === 'syncing' ? 'sincronizando…' : st === 'offline' ? 'sin conexión' : st === 'error' ? 'error de nube' : n ? n + ' pendiente' + (n > 1 ? 's' : '') : 'en la nube ✓'; return ` · <span style="opacity:.9">${t}</span>`; };
 const getLocal = (st, id) => st === 'meta' ? (id === 'settings' ? S.set : null) : S[st].find(x => x.id === id);
 async function putLocal(st, id, data, u) {
-  if (st === 'meta') { S.set = { negocio: 'GL Money', tel: '', pin: '', ...data, id: 'settings', u }; await dbPut('meta', S.set); return; }
+  if (st === 'meta') { S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, ...data, id: 'settings', u }; await dbPut('meta', S.set); return; }
   data.u = u; const a = S[st], i = a.findIndex(x => x.id === id); if (i >= 0) a[i] = data; else a.push(data); await dbPut(st, data);
 }
 async function delLocal(st, id) { if (st === 'meta') return; S[st] = S[st].filter(x => x.id !== id); await dbDel(st, id); }
@@ -1317,7 +1336,7 @@ async function boot() {
   try { db = await openDB(); } catch (e) { console.warn(e); toast('Sin almacenamiento persistente'); }
   try {
     for (const s of SYNC_STORES) S[s] = await dbAll(s) || [];
-    for (const m of await dbAll('meta') || []) { if (m.id === 'settings') S.set = { negocio: 'GL Money', tel: '', pin: '', ...m }; if (m.id === 'ruta') S.ruta = m.keys || []; if (m.id === 'sync') S.sync = { ...S.sync, outbox: m.outbox || {}, last: m.last || null }; }
+    for (const m of await dbAll('meta') || []) { if (m.id === 'settings') S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, ...m }; if (m.id === 'ruta') S.ruta = m.keys || []; if (m.id === 'sync') S.sync = { ...S.sync, outbox: m.outbox || {}, last: m.last || null }; }
   } catch (e) { console.error(e); }
   for (const p of S.payments.filter(p => !p.recibo)) { p.recibo = genReceiptId(new Date(p.fecha)); p.u = Date.now(); await dbPut('payments', p).catch(() => { }); queue('payments', p.id, false, p.u); }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
@@ -1326,6 +1345,8 @@ async function boot() {
   if (!session() && !lsGet('gl_skip')) openAuth(); else syncNow();
   addEventListener('online', () => syncNow());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
+  // reintento automático cada minuto si hay pendientes y vuelve la conexión
+  setInterval(() => { if (navigator.onLine && Object.keys(S.sync.outbox).length) syncNow(); }, 60000);
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 }
 boot();
