@@ -55,7 +55,8 @@ const IC = {
   shirt: '<path d="M8 3.5 5 5l-2 3 2.5 2L7 8.8V20h10V8.8l1.5 1.2L21 8l-2-3-3-1.5a3 3 0 0 1-6 0z"/>',
   cart: '<circle cx="9" cy="19" r="1.4"/><circle cx="18" cy="19" r="1.4"/><path d="M3 4h2.5l2.2 11h11l2.3-8H6.2"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="3"/><path d="M8.5 10.5V7a3.5 3.5 0 0 1 7 0v3.5"/><circle cx="12" cy="15.5" r="1.2"/>',
-  coin: '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2a3.5 3.5 0 0 0-5.6 1.1c-.7 1.6.4 3.2 2.8 3.7s3.5 2.1 2.8 3.7a3.5 3.5 0 0 1-5.6 1.1M12 6.5v11"/>'
+  coin: '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2a3.5 3.5 0 0 0-5.6 1.1c-.7 1.6.4 3.2 2.8 3.7s3.5 2.1 2.8 3.7a3.5 3.5 0 0 1-5.6 1.1M12 6.5v11"/>',
+  chart: '<path d="M4 20h16"/><path d="M7 20v-6M12 20V6M17 20v-9"/><path d="m5 8 5-4 4 3 5-5"/>'
 };
 const ico = n => `<span class="ico"><svg viewBox="0 0 24 24">${IC[n]}</svg></span>`;
 
@@ -67,7 +68,7 @@ const S = {
   clients: [], loans: [], payments: [], notes: [], places: [], products: [], sales: [], expenses: [],
   set: { negocio: 'GL Money', tel: '', pin: '', stockMin: 3 }, ruta: [],
   sync: { outbox: {}, last: null, state: 'nosession' },
-  ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', confFilter: 'todas', ownerUntil: 0 }
+  ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', confFilter: 'todas', ownerUntil: 0, metricPeriod: 'semanal' }
 };
 
 function openDB() {
@@ -403,7 +404,7 @@ function renderHome() {
   const topDeb = act.slice().sort((a, b) => b.c.saldo - a.c.saldo).slice(0, 3);
   const D = [['vencido', 'Vencidos', 'var(--bad)'], ['hoy', 'Cobran hoy', 'var(--warn)'], ['aldia', 'Al día', 'var(--ok)'], ['pagado', 'Pagados', 'var(--gold2)']];
   $('#v-home').innerHTML = `
-  <div class="hd"><div class="hd-l"><img class="hd-logo" src="${LOGO_URL}" alt=""><div><small>${greet()}${syncLabel()}</small><h1>${esc(S.set.negocio || 'GL Money')}</h1></div></div><div style="display:flex;gap:10px"><button class="icon-btn glass" data-a="verify" aria-label="Verificar recibo">${ico('shield')}</button><button class="icon-btn glass" data-a="settings" aria-label="Ajustes">${ico('gear')}</button></div></div>
+  <div class="hd"><div class="hd-l"><img class="hd-logo" src="${LOGO_URL}" alt=""><div><small>${greet()}${syncLabel()}</small><h1>${esc(S.set.negocio || 'GL Money')}</h1></div></div><div style="display:flex;gap:10px"><button class="icon-btn glass" data-a="verify" aria-label="Verificar recibo">${ico('shield')}</button><button class="icon-btn glass" data-a="tab" data-t="metrics" aria-label="Métricas">${ico('chart')}</button><button class="icon-btn glass" data-a="settings" aria-label="Ajustes">${ico('gear')}</button></div></div>
   <div class="hero glass tint-acc"><div class="lbl">Por cobrar</div><div class="big num">${m0(porCobrar)}</div><div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div><div class="sub"><span>${act.length} crédito${act.length === 1 ? '' : 's'} activo${act.length === 1 ? '' : 's'}</span><span>${pct.toFixed(0)}% recuperado</span></div></div>
   <div class="stats"><div class="stat glass tint-ok"><div class="lbl">Cobrado hoy</div><div class="val num">${m0(sum(hoy, p => p.monto))}</div></div><div class="stat glass ${vencido > 0 ? 'tint-bad' : ''}"><div class="lbl">Pendiente exigible</div><div class="val num">${m0(vencido)}</div></div></div>
   <div class="stats" style="margin-top:12px"><div class="stat glass"><div class="lbl">Cobrado este mes</div><div class="val num">${m0(sum(mes, p => p.monto))}</div></div><div class="stat glass"><div class="lbl">Cobros pendientes</div><div class="val num">${dueNow.length}</div></div></div>
@@ -427,6 +428,82 @@ function renderHome() {
   <div class="list">${dueNow.length ? dueNow.map(rowLoan).join('') : empty('check', 'Sin cobros pendientes.')}</div>
   ${prox.length ? `<h3 class="sec"><span>Próximos 7 días</span><span>${prox.length}</span></h3><div class="list">${prox.map(rowLoan).join('')}</div>` : ''}
   <div class="panel glass inv-entry" data-a="open-inv"><div class="lbl">GL Inventario · app aparte</div><div class="inv-entry-row"><div><b>Valor de la mercancía</b><span>${ik.unidades} unidades · ${m0(ik.pendiente)} por cobrar</span></div><b class="num">${m0(ik.valorVenta)}</b></div><div class="inv-entry-go">Abrir inventario ${ico('box')}</div></div>
+  <div class="quote"><b>GL</b> Money · cada peso cuenta</div>`;
+}
+
+/* ============ métricas (semanal / mensual) ============ */
+function metricDate(v) {
+  if (!v) return null;
+  const d = String(v).length === 10 ? parseD(v) : new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+function metricKey(d, mode) {
+  if (mode === 'mensual') return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // lunes
+  return toISO(x);
+}
+function metricPeriods(mode, n) {
+  const out = [], now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    if (mode === 'mensual') {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      out.push({ key: `${d.getFullYear()}-${pad(d.getMonth() + 1)}`, label: MES[d.getMonth()] + (d.getMonth() === 0 ? ` '${String(d.getFullYear()).slice(2)}` : '') });
+    } else {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7 * i);
+      out.push({ key: toISO(d), label: `${d.getDate()}/${pad(d.getMonth() + 1)}` });
+    }
+  }
+  return out;
+}
+function metricsData(mode) {
+  const periods = metricPeriods(mode, mode === 'mensual' ? 12 : 8);
+  const idx = new Map(periods.map((p, i) => [p.key, i]));
+  const bins = periods.map(p => ({ ...p, cobros: 0, n: 0, creditos: 0, capital: 0, clientes: 0, ganancia: 0 }));
+  const add = (arr, fn) => arr.forEach(x => {
+    const d = metricDate(x.fecha); if (!d) return;
+    const i = idx.get(metricKey(d, mode)); if (i == null) return;
+    fn(bins[i], x);
+  });
+  add(S.payments, (b, p) => { b.cobros += +p.monto || 0; b.n++; });
+  add(S.loans, (b, l) => { b.creditos++; b.capital += +l.prestado || 0; });
+  add(S.clients, b => { b.clientes++; });
+  add(S.sales, (b, s) => { b.ganancia += +s.ganancia || 0; });
+  add(S.expenses, (b, e) => { b.ganancia -= +e.valor || 0; });
+  return bins;
+}
+const metricPct = (cur, prev) => {
+  if (!prev) return cur ? 'nuevo' : '0%';
+  const v = (cur - prev) / prev * 100;
+  return (v >= 0 ? '+' : '') + v.toFixed(0) + '%';
+};
+function renderMetrics() {
+  const mode = S.ui.metricPeriod;
+  const bins = metricsData(mode);
+  const z = () => ({ cobros: 0, n: 0, creditos: 0, capital: 0, clientes: 0, ganancia: 0 });
+  const cur = bins[bins.length - 1] || z(), prev = bins[bins.length - 2] || z();
+  const act = enriched().filter(x => x.c.estado !== 'pagado');
+  const mor = act.length ? act.filter(x => x.c.late).length / act.length * 100 : 0;
+  const max = Math.max(1, ...bins.map(b => b.cobros));
+  const growth = (a, b) => { const p = metricPct(a, b); return `<small style="color:${p.startsWith('-') ? 'var(--bad)' : 'var(--ok)'}">${p} vs periodo anterior</small>`; };
+  $('#v-metrics').innerHTML = `
+  <div class="hd"><div><small>Productividad y crecimiento</small><h1>Métricas</h1></div></div>
+  <div class="seg">${[['semanal', 'Semanal'], ['mensual', 'Mensual']].map(([k, t]) => `<button data-a="metric-period" data-p="${k}" class="${mode === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+  <div class="kpis">
+    <div class="kpi glass"><div class="lbl">Cobrado</div><div class="val num">${m0(cur.cobros)}</div>${growth(cur.cobros, prev.cobros)}</div>
+    <div class="kpi glass"><div class="lbl">Cobros</div><div class="val num">${cur.n}</div><small>ticket ${m0(cur.n ? cur.cobros / cur.n : 0)}</small></div>
+    <div class="kpi glass"><div class="lbl">Créditos nuevos</div><div class="val num">${cur.creditos}</div>${growth(cur.creditos, prev.creditos)}</div>
+    <div class="kpi glass"><div class="lbl">Capital prestado</div><div class="val num">${m0(cur.capital)}</div><small>en el periodo</small></div>
+    <div class="kpi glass"><div class="lbl">Clientes nuevos</div><div class="val num">${cur.clientes}</div>${growth(cur.clientes, prev.clientes)}</div>
+    <div class="kpi glass"><div class="lbl">Ganancia neta</div><div class="val num">${m0(cur.ganancia)}</div><small>ventas − gastos</small></div>
+  </div>
+  <div class="panel glass"><h4><span>Cobros · ${mode === 'mensual' ? 'últimos 12 meses' : 'últimas 8 semanas'}</span><em class="num">${m0(sum(bins, b => b.cobros))}</em></h4>
+    <div class="chart">${bins.map((b, i) => `<div class="col ${b.cobros ? '' : 'z'} ${i === bins.length - 1 ? 't' : ''}"><div class="chart-v num">${b.cobros ? m0(b.cobros) : ''}</div><i style="height:${b.cobros ? Math.max(6, b.cobros / max * 62) : 3}px"></i><span>${b.label}</span></div>`).join('')}</div></div>
+  <div class="panel glass"><h4><span>Detalle ${mode === 'mensual' ? 'mensual' : 'semanal'}</span><em>${bins.length} periodos</em></h4>
+    ${bins.slice().reverse().map(b => `<div class="prow"><div class="pi" style="font-size:11px">${esc(b.label)}</div><div class="pm"><b class="num">${m0(b.cobros)} cobrado</b><small>${b.n} cobros · ${b.creditos} créditos · ${b.clientes} clientes</small></div><div class="pv g num">${m0(b.ganancia)}</div></div>`).join('')}</div>
+  <div class="panel glass"><h4><span>Salud del negocio</span></h4>
+    <div class="legend"><div>Morosidad<b style="color:${mor > 25 ? 'var(--bad)' : 'var(--txt)'}">${mor.toFixed(0)}%</b></div><div>Créditos activos<b>${act.length}</b></div><div>Clientes totales<b>${S.clients.length}</b></div><div>Pagos totales<b>${S.payments.length}</b></div></div></div>
   <div class="quote"><b>GL</b> Money · cada peso cuenta</div>`;
 }
 
@@ -491,7 +568,7 @@ function openPayForm(loanId) {
     <div class="calc glass"><div><span>Cuota</span><b class="num">${m2(c.cuota)}</b></div><div><span>Saldo total</span><b class="num">${m2(c.saldo)}</b></div></div>
     <label class="field"><span>Monto abonado</span><input name="monto" type="number" inputmode="decimal" step="any" min="0.01" required value="${Math.round(def * 100) / 100}"></label>
     <label class="field"><span>Fecha y hora</span><input name="fecha" type="datetime-local" required value="${toLocalDT(new Date())}"></label>
-    <div class="two"><label class="field"><span>Método</span><select name="metodo">${['Efectivo', 'Transferencia', 'Nequi', 'Daviplata', 'Otro'].map(x => `<option>${x}</option>`).join('')}</select></label>
+    <div class="two"><label class="field"><span>Método</span><select name="metodo">${['Efectivo', 'Transferencia', 'Nequi', 'Daviplata', 'Addi', 'Otro'].map(x => `<option>${x}</option>`).join('')}</select></label>
     <label class="field"><span>Abono a</span><select name="abonoA"><option value="Interés y Capital">Interés y Capital</option><option value="Capital">Solo capital</option><option value="Interés">Solo interés</option></select></label></div>
     <button class="btn ok blk" type="submit">${ico('check')} Guardar pago</button></form>`);
   $('#pf', el).addEventListener('submit', async e => {
@@ -581,7 +658,7 @@ const clientFields = c => `
   ${locHTML(c)}${photoHTML('fotoFachada', 'Foto de la fachada', c.fotoFachada)}${photoHTML('fotoPersona', 'Foto del cliente', c.fotoPersona)}`;
 function readClient(form, st, base) {
   const f = new FormData(form);
-  return { ...base, id: base.id || uid(), nombre: String(f.get('nombre')).trim(), doc: String(f.get('doc') || '').trim(), tel: String(f.get('tel') || '').trim(), dir: String(f.get('dir') || '').trim(), ref: String(f.get('ref') || '').trim(), lat: st.lat ?? null, lng: st.lng ?? null, fotoFachada: st.fotoFachada || null, fotoPersona: st.fotoPersona || null };
+  return { ...base, fecha: base.fecha || new Date().toISOString(), id: base.id || uid(), nombre: String(f.get('nombre')).trim(), doc: String(f.get('doc') || '').trim(), tel: String(f.get('tel') || '').trim(), dir: String(f.get('dir') || '').trim(), ref: String(f.get('ref') || '').trim(), lat: st.lat ?? null, lng: st.lng ?? null, fotoFachada: st.fotoFachada || null, fotoPersona: st.fotoPersona || null };
 }
 function openClientForm(id) {
   const base = id ? client(id) : {}, st = { ...base };
@@ -1146,11 +1223,12 @@ function openSettings() {
 /* ============ navegación y acciones ============ */
 function refreshAll() {
   renderHome(); renderLoans(); renderNotes(); refreshMap();
+  if (S.ui.tab === 'metrics') renderMetrics();
   if (isInvTab(S.ui.tab)) renderInv();
   $$('.sheet-wrap[data-live]:not(.closing)').forEach(e => e._r && e._r());
 }
-const DOCK_COBROS = [['home', 'home', 'Inicio'], ['loans', 'wallet', 'Créditos'], ['map', 'map', 'Mapa'], ['notes', 'note', 'Notas']];
-const DOCK_INV = [['inv-res', 'box', 'Resumen'], ['inv-prod', 'shirt', 'Productos'], ['inv-vent', 'cart', 'Ventas'], ['inv-gast', 'coin', 'Gastos']];
+const DOCK_COBROS = [['home', 'home', 'Inicio'], ['loans', 'wallet', 'Créditos'], ['map', 'map', 'Mapa'], ['notes', 'note', 'Notas'], ['metrics', 'chart', 'Métricas']];
+const DOCK_INV = [['inv-res', 'box', 'Resumen'], ['inv-prod', 'shirt', 'Productos'], ['inv-vent', 'cart', 'Ventas'], ['inv-gast', 'coin', 'Gastos'], ['metrics', 'chart', 'Métricas']];
 function renderDock() {
   const defs = S.ui.mode === 'inv' ? DOCK_INV : DOCK_COBROS;
   $$('#dockPill button[data-t]').forEach((b, i) => {
@@ -1168,6 +1246,7 @@ function setTab(t) {
   $$('.view').forEach(v => v.classList.toggle('on', v.id === (isInvTab(t) ? 'v-inv' : 'v-' + t)));
   $$('#dockPill button[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (isInvTab(t)) renderInv();
+  if (t === 'metrics') renderMetrics();
   if (t === 'map') { initMap(); setTimeout(() => { if (map && gm) gm.event.trigger(map, 'resize'); }, 60); }
   window.scrollTo(0, 0);
 }
@@ -1212,6 +1291,7 @@ const A = {
   place: d => openPlace(d.id), 'edit-place': d => openPlaceForm(d.id), 'add-place': () => openPlaceForm(),
   'del-place': async d => { if (await ask('¿Eliminar este punto?')) { await remove('places', d.id); S.ruta = S.ruta.filter(k => k !== 'p:' + d.id); saveMeta(); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); } },
   filter: d => { S.ui.filter = d.f; renderLoanList(); },
+  'metric-period': d => { S.ui.metricPeriod = d.p; renderMetrics(); },
   settings: openSettings, verify: openVerify,
   img: d => { const lb = document.createElement('div'); lb.className = 'lightbox'; lb.innerHTML = `<img src="${d.src}" alt="">`; lb.onclick = () => lb.remove(); document.body.append(lb); },
   me: async () => { try { const p = await getPos(); setMe(p); if (map && gm) { map.setCenter(gmPos(p)); map.setZoom(16); } } catch { toast('No se pudo obtener el GPS'); } },
@@ -1373,7 +1453,7 @@ async function boot() {
   for (const p of S.payments.filter(p => !p.recibo)) { p.recibo = genReceiptId(new Date(p.fecha)); p.u = Date.now(); await dbPut('payments', p).catch(() => { }); queue('payments', p.id, false, p.u); }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
   S.sync.state = session() ? 'idle' : 'nosession';
-  renderHome(); renderLoans(); renderNotes(); renderInv(); renderDock();
+  renderHome(); renderLoans(); renderNotes(); renderMetrics(); renderInv(); renderDock();
   if (!session() && !lsGet('gl_skip')) openAuth(); else syncNow();
   addEventListener('online', () => syncNow());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
