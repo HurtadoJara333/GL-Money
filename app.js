@@ -66,8 +66,8 @@ const SYNC_STORES = ['clients', 'loans', 'payments', 'notes', 'places', 'product
 let db = null;
 const S = {
   clients: [], loans: [], payments: [], notes: [], places: [], products: [], sales: [], expenses: [],
-  set: { negocio: 'GL Money', tel: '', pin: '', stockMin: 3 }, ruta: [],
-  sync: { outbox: {}, last: null, state: 'nosession' },
+  set: { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, envioTotal: 0, envioCant: 0 }, ruta: [],
+  sync: { outbox: {}, last: null, lastError: null, state: 'nosession' },
   ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', confFilter: 'todas', ownerUntil: 0, metricPeriod: 'semanal' }
 };
 
@@ -789,6 +789,7 @@ function renderInv() {
     <div class="list" style="margin-top:14px">${S.expenses.length ? S.expenses.slice().sort((a, b) => b.fecha.localeCompare(a.fecha)).map(e => `<button class="row glass" data-a="exp" data-id="${e.id}"><div class="avatar">${ico('coin')}</div><div class="mid"><div class="t">${esc(e.descripcion || 'Gasto')}</div><div class="s">${esc(e.categoria || 'Otro')} · ${fmtD(new Date(e.fecha))}</div></div><div class="r"><b class="num" style="color:var(--bad)">-${m0(e.valor)}</b></div></button>`).join('') : empty('coin', 'Aún no hay gastos.<br>Toca + para registrar el primero.')}</div>`;
   }
 }
+const envioUnit = () => { const n = +S.set.envioCant || 0; return n > 0 ? (+S.set.envioTotal || 0) / n : 0; };
 function invResumenHTML() {
   const k = invStats(), today = new Date(), dias = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
   const wk = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(d.getDate() - (6 - i)); return { d, v: sum(S.sales.filter(s => sameDay(new Date(s.fecha), d)), s => +s.ganancia || 0) }; });
@@ -813,6 +814,11 @@ function invResumenHTML() {
     <div class="kpi glass"><div class="lbl">Pagos por confirmar</div><div class="val num" style="${porConf.length ? 'color:var(--warn)' : ''}">${porConf.length}</div><small>${m0(sum(porConf, s => s.total))}</small></div>
   </div>
   <div class="btns inv-act"><button class="btn pri" data-a="vender">${ico('cart')} Vender</button><button class="btn" data-a="new-prod">${ico('shirt')} Prenda</button><button class="btn" data-a="new-exp">${ico('coin')} Gasto</button></div>
+  <div class="panel glass"><h4><span>Envío desde EE.UU.</span><em>se reparte por prenda</em></h4>
+    <div class="two"><label class="field"><span>Valor total del envío</span><input id="envTotal" type="number" min="0" step="any" inputmode="decimal" value="${+S.set.envioTotal || 0}"></label>
+    <label class="field"><span>Prendas traídas en el envío</span><input id="envCant" type="number" min="0" step="1" inputmode="numeric" value="${+S.set.envioCant || 0}"></label></div>
+    <p class="hint">Cada prenda nueva sumará <b style="color:var(--gold1)">${m2(envioUnit())}</b> de envío a su costo unitario.</p>
+    <button class="btn sm" data-a="save-envio">${ico('check')} Guardar envío</button></div>
   <div class="panel glass"><h4><span>Ganancia · 7 días</span><em class="num">${m0(wsum)}</em></h4>
     <div class="chart">${wk.map((x, i) => `<div class="col ${x.v ? '' : 'z'} ${i === 6 ? 't' : ''}"><div class="chart-v num">${x.v ? m0(x.v) : ''}</div><i style="height:${x.v ? Math.max(6, x.v / wmax * 62) : 3}px"></i><span>${i === 6 ? 'Hoy' : dias[x.d.getDay()]}</span></div>`).join('')}</div></div>
   ${low.length ? `<div class="panel glass tint-bad"><h4><span>⚠ Stock por agotarse</span><em>${low.length} prendas</em></h4>${low.map(p => `<div class="prow" data-a="prod" data-id="${p.id}"><div class="pi">${ico('shirt')}</div><div class="pm"><b>${esc(p.nombre)}</b><small>Talla ${esc(p.talla || 'Única')} · aviso ≤ ${stockMin(p) || 0}</small></div><div class="pv" style="color:${isOut(p) ? 'var(--bad)' : 'var(--warn)'}">${p.cantidad} und.${isOut(p) ? ' · Agotado' : ''}</div></div>`).join('')}</div>` : ''}
@@ -845,8 +851,10 @@ function renderSaleList() {
 
 /* ---- prendas ---- */
 function openProductForm(id) {
-  const base = id ? S.products.find(p => p.id === id) : { categoria: 'Camisas', talla: 'M', cantidad: 1, costo: 0, precio: 0, min: defaultMin() };
+  const eu = envioUnit();
+  const base = id ? S.products.find(p => p.id === id) : { categoria: 'Camisas', talla: 'M', cantidad: 1, costoUSA: 0, costo: eu, precio: 0, min: defaultMin() };
   if (!base) return;
+  const unitario = base.costoUSA != null ? +base.costoUSA : Math.max(0, (+base.costo || 0) - eu);
   const el = sheet(id ? 'Editar prenda' : 'Nueva prenda', `<form id="pform">
     <label class="field"><span>Prenda</span><input name="nombre" required autocomplete="off" placeholder="Ej: Camisa Oxford blanca" value="${esc(base.nombre || '')}"></label>
     <label class="field"><span>Categoría</span><input name="categoria" list="catList" autocomplete="off" value="${esc(base.categoria || '')}"><datalist id="catList">${[...new Set([...CATS, ...S.products.map(p => p.categoria)])].filter(Boolean).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
@@ -855,18 +863,19 @@ function openProductForm(id) {
     <label class="field"><span>Avisar cuando queden ≤</span><input name="min" id="pm" type="number" inputmode="numeric" min="0" step="1" value="${base.min != null ? base.min : defaultMin()}"></label>
     <p class="hint">Al llegar a ese número avisará en el resumen y al hacer una venta. 0 = solo avisar si se agota.</p>
     <datalist id="tallaList">${TALLAS.map(t => `<option value="${t}">`).join('')}</datalist>
-    <div class="two"><label class="field"><span>Valor de costo del producto</span><input name="costo" id="pc" type="number" inputmode="decimal" min="0" step="any" value="${base.costo || 0}"></label>
+    <div class="two"><label class="field"><span>Costo unitario de la prenda (en EE.UU.)</span><input name="costo" id="pc" type="number" inputmode="decimal" min="0" step="any" value="${unitario}"></label>
     <label class="field"><span>Precio final al cliente</span><input name="precio" id="pp" type="number" inputmode="decimal" min="0" step="any" value="${base.precio || 0}"></label></div>
+    <p class="hint">El envío se reparte automáticamente entre las prendas del lote (${m2(eu)} por prenda).</p>
     <label class="field"><span>Nota (opcional)</span><input name="nota" autocomplete="off" value="${esc(base.nota || '')}"></label>
-    <div class="calc glass"><div><span>Ganancia por unidad</span><b class="num" id="pg">$0.00</b></div><div><span>Valor en inventario</span><b class="num" id="pv">$0.00</b></div></div>
+    <div class="calc glass"><div><span>Costo final por unidad</span><b class="num" id="pcf">$0.00</b></div><div><span>Ganancia por unidad</span><b class="num" id="pg">$0.00</b></div><div><span>Envío por prenda</span><b class="num" id="pe">$0.00</b></div><div><span>Valor en inventario</span><b class="num" id="pv">$0.00</b></div></div>
     <button class="btn pri blk" type="submit">${ico('check')} Guardar prenda</button></form>`, { full: true });
   const f = $('#pform', el), C = $('#pc', el), P = $('#pp', el), A = $('#pa', el);
-  const upd = () => { $('#pg', el).textContent = m2((+P.value || 0) - (+C.value || 0)); $('#pv', el).textContent = m2((+A.value || 0) * (+P.value || 0)); };
+  const upd = () => { const cf = (+C.value || 0) + eu; $('#pcf', el).textContent = m2(cf); $('#pe', el).textContent = m2(eu); $('#pg', el).textContent = m2((+P.value || 0) - cf); $('#pv', el).textContent = m2((+A.value || 0) * (+P.value || 0)); };
   [C, P, A].forEach(x => x.addEventListener('input', upd)); upd();
   f.addEventListener('submit', async e => {
     e.preventDefault(); const fd = new FormData(f);
     const nombre = String(fd.get('nombre') || '').trim(); if (!nombre) return toast('Escribe el nombre de la prenda');
-    const p = { ...base, id: base.id || uid(), nombre, categoria: String(fd.get('categoria') || '').trim() || 'General', talla: String(fd.get('talla') || '').trim() || 'Única', cantidad: Math.max(0, Math.floor(+fd.get('cantidad') || 0)), min: Math.max(0, Math.floor(+fd.get('min') || 0)), costo: +fd.get('costo') || 0, precio: +fd.get('precio') || 0, nota: String(fd.get('nota') || '').trim() };
+    const p = { ...base, id: base.id || uid(), nombre, categoria: String(fd.get('categoria') || '').trim() || 'General', talla: String(fd.get('talla') || '').trim() || 'Única', cantidad: Math.max(0, Math.floor(+fd.get('cantidad') || 0)), min: Math.max(0, Math.floor(+fd.get('min') || 0)), costoUSA: +fd.get('costo') || 0, envioUnit: eu, costo: (+fd.get('costo') || 0) + eu, precio: +fd.get('precio') || 0, nota: String(fd.get('nota') || '').trim() };
     if (p.precio < p.costo) return toast('El precio no puede ser menor al costo');
     await save('products', p); closeSheet(el); refreshAll(); toast(id ? 'Prenda actualizada' : 'Prenda agregada');
   });
@@ -876,7 +885,7 @@ function openProduct(id) {
     const p = S.products.find(x => x.id === id); if (!p) return '';
     const il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
     return `<div class="head-c"><div class="avatar lg">${ico('shirt')}</div><div style="flex:1"><h3>${esc(p.nombre)}</h3><p>${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')}</p></div><span class="chip ${isOut(p) ? 'bad' : isLow(p) ? 'warn' : 'ok'}">${p.cantidad} und.${isOut(p) ? ' · Agotado' : isLow(p) ? ' · Stock bajo' : ''}</span></div>
-    <div class="stmt glass">${il('Valor de costo', m2(p.costo))}${il('Precio final al cliente', m2(p.precio))}${il('Ganancia por unidad', m2(+p.precio - +p.costo))}${il('Valor en inventario', m2((+p.precio) * (+p.cantidad || 0)))}${il('Ganancia esperada', m2((+p.precio - +p.costo) * (+p.cantidad || 0)))}${il('Aviso de stock', stockMin(p) ? '≤ ' + stockMin(p) + ' und.' : 'Solo si se agota')}${p.nota ? il('Nota', esc(p.nota)) : ''}</div>
+    <div class="stmt glass">${il('Costo en EE.UU.', m2(p.costoUSA != null ? p.costoUSA : Math.max(0, +p.costo - envioUnit())))}${il('Envío por prenda', m2(p.envioUnit != null ? p.envioUnit : envioUnit()))}${il('Costo final por unidad', m2(p.costo))}${il('Precio final al cliente', m2(p.precio))}${il('Ganancia por unidad', m2(+p.precio - +p.costo))}${il('Valor en inventario', m2((+p.precio) * (+p.cantidad || 0)))}${il('Ganancia esperada', m2((+p.precio - +p.costo) * (+p.cantidad || 0)))}${il('Aviso de stock', stockMin(p) ? '≤ ' + stockMin(p) + ' und.' : 'Solo si se agota')}${p.nota ? il('Nota', esc(p.nota)) : ''}</div>
     <div class="btns"><button class="btn pri sm" data-a="edit-prod" data-id="${p.id}">${ico('edit')} Editar</button><button class="btn danger sm" data-a="del-prod" data-id="${p.id}">${ico('trash')} Eliminar</button></div>
     <h3 class="sec"><span>Reponer stock</span></h3><form class="btns" data-stock="${p.id}"><input class="field" name="q" type="number" min="1" step="1" value="1" style="flex:1;margin:0;border-radius:99px;padding:12px 16px"><button class="btn ok" type="submit">${ico('plus')} Añadir</button></form>`;
   }, { full: true });
@@ -1202,7 +1211,7 @@ function openSettings() {
     }
     if (b.dataset.k === 'syncnow') { closeSheet(el); syncNow(true); return; }
     if (b.dataset.k === 'login') { closeSheet(el); openAuth(); return; }
-    if (b.dataset.k === 'logout') { if (await ask('Se cerrará la sesión en este teléfono. Los datos locales se conservan.', 'Cerrar sesión')) { signOut(); closeSheet(el); refreshAll(); toast('Sesión cerrada'); } return; }
+    if (b.dataset.k === 'logout') { if (await ask('Se cerrará la sesión en este teléfono. Los datos locales se conservan y tendrás que volver a entrar.', 'Cerrar sesión')) { signOut(); closeSheet(el); refreshAll(); openAuth(); toast('Sesión cerrada'); } return; }
     if (b.dataset.k === 'wipe' && await ask('Se borrarán TODOS los clientes, créditos, pagos, notas, puntos, inventario, ventas y gastos' + (session() ? ', también en la nube' : '') + '. No se puede deshacer.', 'Borrar todo')) {
       for (const st of SYNC_STORES) for (const o of S[st]) queue(st, o.id, true, Date.now());
       for (const s of SYNC_STORES) await dbClear(s).catch(() => { });
@@ -1215,7 +1224,7 @@ function openSettings() {
       const d = JSON.parse(await f.text()); if (d.app !== 'cobroEmpire') throw 0;
       if (!await ask('Esto reemplazará los datos actuales por el respaldo.', 'Importar')) return;
       for (const s of SYNC_STORES) { await dbClear(s).catch(() => { }); S[s] = d[s] || []; for (const o of S[s]) { o.u = Date.now(); await dbPut(s, o); queue(s, o.id, false, o.u); } }
-      S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, ...(d.set || {}) }; S.ruta = d.ruta || []; S.ui.ownerUntil = 0; await saveMeta(); closeSheet(el); refreshAll(); toast('Respaldo importado');
+      S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, envioTotal: 0, envioCant: 0, ...(d.set || {}) }; S.ruta = d.ruta || []; S.ui.ownerUntil = 0; await saveMeta(); closeSheet(el); refreshAll(); toast('Respaldo importado');
     } catch { toast('Archivo no válido'); }
   });
 }
@@ -1292,6 +1301,12 @@ const A = {
   'del-place': async d => { if (await ask('¿Eliminar este punto?')) { await remove('places', d.id); S.ruta = S.ruta.filter(k => k !== 'p:' + d.id); saveMeta(); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); } },
   filter: d => { S.ui.filter = d.f; renderLoanList(); },
   'metric-period': d => { S.ui.metricPeriod = d.p; renderMetrics(); },
+  'save-envio': () => ownerGate(async () => {
+    const t = Math.max(0, +($('#envTotal')?.value) || 0), c = Math.max(0, Math.floor(+($('#envCant')?.value) || 0));
+    S.set.envioTotal = t; S.set.envioCant = c; S.set.u = Date.now();
+    await saveMeta(); queue('meta', 'settings', false, S.set.u);
+    renderInv(); toast(`Envío guardado · ${m2(c ? t / c : 0)} por prenda`);
+  }),
   settings: openSettings, verify: openVerify,
   img: d => { const lb = document.createElement('div'); lb.className = 'lightbox'; lb.innerHTML = `<img src="${d.src}" alt="">`; lb.onclick = () => lb.remove(); document.body.append(lb); },
   me: async () => { try { const p = await getPos(); setMe(p); if (map && gm) { map.setCenter(gmPos(p)); map.setZoom(16); } } catch { toast('No se pudo obtener el GPS'); } },
@@ -1313,8 +1328,8 @@ document.addEventListener('click', e => {
 }, true);
 
 /* ============ nube (Supabase) ============ */
-const SUPA_URL = 'https://ezflhmsflyndcrgjxtdi.supabase.co';
-const SUPA_KEY = 'sb_publishable_yiMtuMrjqhKMjk_GdxCBYg_Vv4PU_gI';
+const SUPA_URL = window.NEXT_PUBLIC_SUPABASE_URL || 'https://ezflhmsflyndcrgjxtdi.supabase.co';
+const SUPA_KEY = window.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_yiMtuMrjqhKMjk_GdxCBYg_Vv4PU_gI';
 const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { } };
 const session = () => { try { return JSON.parse(lsGet('gl_session') || 'null'); } catch { return null; } };
@@ -1345,10 +1360,10 @@ async function queue(store, id, del, u) {
   await persistSync(); // la cola se graba en IndexedDB antes de seguir: aunque se cierre la app, el cambio no se pierde
   if (session()) { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(), 2500); }
 }
-const syncLabel = () => { const n = Object.keys(S.sync.outbox).length, st = S.sync.state; const t = st === 'nosession' ? 'sin nube' : st === 'syncing' ? 'sincronizando…' : st === 'offline' ? 'sin conexión' : st === 'error' ? 'error de nube' : n ? n + ' pendiente' + (n > 1 ? 's' : '') : 'en la nube ✓'; return ` · <span style="opacity:.9">${t}</span>`; };
+const syncLabel = () => { const n = Object.keys(S.sync.outbox).length, st = S.sync.state; const t = st === 'nosession' ? 'sin sesión' : st === 'syncing' ? 'sincronizando…' : st === 'offline' ? 'sin conexión' : st === 'error' ? 'error de nube' : n ? n + ' pendiente' + (n > 1 ? 's' : '') : 'en la nube ✓'; return ` · <span style="opacity:.9">${t}</span>`; };
 const getLocal = (st, id) => st === 'meta' ? (id === 'settings' ? S.set : null) : S[st].find(x => x.id === id);
 async function putLocal(st, id, data, u) {
-  if (st === 'meta') { S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, ...data, id: 'settings', u }; await dbPut('meta', S.set); return; }
+  if (st === 'meta') { S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, envioTotal: 0, envioCant: 0, ...data, id: 'settings', u }; await dbPut('meta', S.set); return; }
   data.u = u; const a = S[st], i = a.findIndex(x => x.id === id); if (i >= 0) a[i] = data; else a.push(data); await dbPut(st, data);
 }
 async function delLocal(st, id) { if (st === 'meta') return; S[st] = S[st].filter(x => x.id !== id); await dbDel(st, id); }
@@ -1397,30 +1412,43 @@ async function syncNow(manual) {
       const rows = await rest(`gl_docs?select=id,data,deleted,updated_at&store=eq.${st}&id=in.(${encodeURIComponent(ids)})`) || [];
       for (const r of rows) { if (r.deleted || !r.data) continue; await putLocal(st, r.id, r.data, Date.parse(r.updated_at)); changed = true; }
     }
-    S.sync.last = Date.now(); S.sync.state = 'idle'; await persistSync();
+    S.sync.last = Date.now(); S.sync.state = 'idle'; S.sync.lastError = null; await persistSync();
     manual && toast('Sincronizado');
   } catch (e) {
     console.error(e); S.sync.state = session() ? 'error' : 'nosession';
+    S.sync.lastError = e.message === 'nosession' ? 'Sin sesión: inicia sesión en Ajustes' : e.message;
     manual && toast(e.message === 'nosession' ? 'Inicia sesión' : 'No se pudo sincronizar');
   } finally { syncing = false; changed ? refreshAll() : renderHome(); }
 }
-function signOut() { setSession(null); lsSet('gl_skip', '1'); S.sync.state = 'nosession'; }
+function signOut() { setSession(null); S.sync.state = 'nosession'; S.sync.lastError = null; }
+const cloudStateLabel = () => ({ nosession: 'sin sesión', syncing: 'sincronizando…', offline: 'sin conexión', error: 'error de nube', idle: 'en la nube ✓' }[S.sync.state] || S.sync.state);
+function cloudDiag(s) {
+  const host = String(SUPA_URL || '').replace(/^https?:\/\//, '').split('/')[0];
+  return `<div class="stmt glass" style="margin-bottom:12px">
+    <div class="ln"><span>Proyecto Supabase</span><b>${esc(host || '—')}</b></div>
+    <div class="ln"><span>Clave pública</span><b style="color:${SUPA_KEY ? 'var(--ok)' : 'var(--bad)'}">${SUPA_KEY ? 'configurada ✓' : 'falta'}</b></div>
+    <div class="ln"><span>Sesión</span><b style="color:${s ? 'var(--ok)' : 'var(--warn)'}">${s ? 'activa' : 'no iniciada'}</b></div>
+    <div class="ln"><span>Estado</span><b>${cloudStateLabel()}</b></div>
+    ${S.sync.lastError ? `<div class="ln"><span>Último error</span><b style="color:var(--bad);font-size:13px">${esc(S.sync.lastError)}</b></div>` : ''}
+  </div>`;
+}
 function accountHTML() {
   const s = session();
-  if (!s) return `<p class="hint">Sin sesión: los datos solo están en este teléfono. Inicia sesión para guardarlos en la nube y no perder nada.</p><div class="btns"><button class="btn pri" data-k="login">${ico('user')} Iniciar sesión</button></div>`;
+  if (!s) return `${cloudDiag(null)}<p class="hint">Sin sesión: los datos solo están en este teléfono. Inicia sesión (o crea cuenta y confirma tu correo) para guardarlos en la nube.</p><div class="btns"><button class="btn pri" data-k="login">${ico('user')} Iniciar sesión</button></div>`;
   const n = Object.keys(S.sync.outbox).length;
-  return `<div class="stmt glass"><div class="ln"><span>Cuenta</span><b>${esc(s.user.email || '')}</b></div><div class="ln"><span>Última sincronización</span><b>${S.sync.last ? fmtD(new Date(S.sync.last)) + ' ' + pad(new Date(S.sync.last).getHours()) + ':' + pad(new Date(S.sync.last).getMinutes()) : '—'}</b></div><div class="ln"><span>Pendientes</span><b>${n}</b></div></div><div class="btns"><button class="btn pri" data-k="syncnow">Sincronizar ahora</button><button class="btn" data-k="logout">Cerrar sesión</button></div>`;
+  return `${cloudDiag(s)}<div class="stmt glass"><div class="ln"><span>Cuenta</span><b>${esc(s.user.email || '')}</b></div><div class="ln"><span>Última sincronización</span><b>${S.sync.last ? fmtD(new Date(S.sync.last)) + ' ' + pad(new Date(S.sync.last).getHours()) + ':' + pad(new Date(S.sync.last).getMinutes()) : '—'}</b></div><div class="ln"><span>Pendientes</span><b>${n}</b></div></div><div class="btns"><button class="btn pri" data-k="syncnow">Sincronizar ahora</button><button class="btn" data-k="logout">Cerrar sesión</button></div>`;
 }
 function openAuth() {
   if ($('.auth')) return;
+  const saved = lsGet('gl_user') || '';
   const el = document.createElement('div'); el.className = 'auth';
-  el.innerHTML = `<form class="auth-card glass" id="af"><img src="${LOGO_URL}" alt="GL Money"><h2>GL Money</h2><p>Entra para guardar tus datos en la nube.</p>
-  <label class="field"><span>Correo</span><input id="ae" type="email" autocomplete="email" autocapitalize="off" required></label>
+  el.innerHTML = `<form class="auth-card glass" id="af"><img src="${LOGO_URL}" alt="GL Money"><h2>GL Money</h2><p>Inicia sesión para usar la app y guardar tus datos en la nube.</p>
+  <label class="field"><span>Correo</span><input id="ae" type="email" autocomplete="email" autocapitalize="off" required value="${esc(saved)}"></label>
   <label class="field"><span>Contraseña</span><input id="ap" type="password" autocomplete="current-password" minlength="6" required></label>
+  <label class="remember"><input type="checkbox" id="ar" ${saved ? 'checked' : ''}> Recordar usuario</label>
   <div class="msg" id="am" role="alert"></div>
   <button class="btn pri blk" type="submit" data-m="in">Entrar</button>
-  <button class="btn blk" type="button" data-m="up" style="margin-top:10px">Crear cuenta</button>
-  <button class="link" type="button" data-m="skip">Continuar sin cuenta</button></form>`;
+  <button class="btn blk" type="button" data-m="up" style="margin-top:10px">Crear cuenta</button></form>`;
   document.body.append(el);
   const msg = t => { $('#am', el).textContent = t; };
   const go = async mode => {
@@ -1432,14 +1460,16 @@ function openAuth() {
       if (mode === 'up') { r = await authCall('signup', { email, password }); if (!r.access_token) return msg('Te enviamos un correo de confirmación. Confírmalo y luego pulsa Entrar.'); }
       else r = await authCall('token?grant_type=password', { email, password });
       const ses = toSession(r); if (!ses.user.id) throw new Error('Respuesta inválida');
-      setSession(ses); lsSet('gl_skip', null); el.remove(); S.sync.state = 'idle'; renderHome(); toast('Sesión iniciada'); syncNow(true);
+      const remember = $('#ar', el).checked;
+      lsSet('gl_user', remember ? email : null);
+      setSession(ses); el.remove(); S.sync.state = 'idle'; renderHome(); toast('Sesión iniciada'); syncNow(true);
     } catch (e) {
       const m = e.message || '';
       msg(/invalid login/i.test(m) ? 'Correo o contraseña incorrectos.' : /not confirmed/i.test(m) ? 'Confirma tu correo primero (revisa tu bandeja).' : /already/i.test(m) ? 'Ese correo ya tiene cuenta. Pulsa Entrar.' : /signups? not allowed|disabled/i.test(m) ? 'El registro está desactivado.' : /fetch|network/i.test(m) ? 'Sin conexión.' : m);
     }
   };
   $('#af', el).addEventListener('submit', e => { e.preventDefault(); go('in'); });
-  el.addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; if (b.dataset.m === 'up') go('up'); if (b.dataset.m === 'skip') { lsSet('gl_skip', '1'); el.remove(); } });
+  el.addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; if (b.dataset.m === 'up') go('up'); });
 }
 
 /* ============ arranque ============ */
@@ -1448,13 +1478,13 @@ async function boot() {
   try { db = await openDB(); } catch (e) { console.warn(e); toast('Sin almacenamiento persistente'); }
   try {
     for (const s of SYNC_STORES) S[s] = await dbAll(s) || [];
-    for (const m of await dbAll('meta') || []) { if (m.id === 'settings') S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, ...m }; if (m.id === 'ruta') S.ruta = m.keys || []; if (m.id === 'sync') S.sync = { ...S.sync, outbox: m.outbox || {}, last: m.last || null }; }
+    for (const m of await dbAll('meta') || []) { if (m.id === 'settings') S.set = { negocio: 'GL Money', tel: '', pin: '', stockMin: 3, envioTotal: 0, envioCant: 0, ...m }; if (m.id === 'ruta') S.ruta = m.keys || []; if (m.id === 'sync') S.sync = { ...S.sync, outbox: m.outbox || {}, last: m.last || null }; }
   } catch (e) { console.error(e); }
   for (const p of S.payments.filter(p => !p.recibo)) { p.recibo = genReceiptId(new Date(p.fecha)); p.u = Date.now(); await dbPut('payments', p).catch(() => { }); queue('payments', p.id, false, p.u); }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
   S.sync.state = session() ? 'idle' : 'nosession';
   renderHome(); renderLoans(); renderNotes(); renderMetrics(); renderInv(); renderDock();
-  if (!session() && !lsGet('gl_skip')) openAuth(); else syncNow();
+  if (!session()) openAuth(); else syncNow();
   addEventListener('online', () => syncNow());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
   // reintento automático cada minuto si hay pendientes y vuelve la conexión

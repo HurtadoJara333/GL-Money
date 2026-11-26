@@ -1,4 +1,4 @@
-const V = 'ce-v16';
+const V = 'ce-v17';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './manifest.json',
   './vendor/leaflet.js', './vendor/leaflet.css',
   './vendor/fonts/oswald-latin.woff2', './vendor/fonts/oswald-latin-ext.woff2',
