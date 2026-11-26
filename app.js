@@ -67,7 +67,7 @@ const S = {
   clients: [], loans: [], payments: [], notes: [], places: [], products: [], sales: [], expenses: [],
   set: { negocio: 'GL Money', tel: '', pin: '', stockMin: 3 }, ruta: [],
   sync: { outbox: {}, last: null, state: 'nosession' },
-  ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', ownerUntil: 0 }
+  ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', confFilter: 'todas', ownerUntil: 0 }
 };
 
 function openDB() {
@@ -172,6 +172,7 @@ function genInvoice(date) {
   }
 }
 const salePend = s => Math.max(0, (+s.total || 0) - (+s.abonado || 0));
+const saleConf = s => s && s.conf === 'pendiente' ? 'pendiente' : 'confirmado';
 /* aviso de stock: umbral global y umbral por prenda */
 const defaultMin = () => S.set.stockMin == null ? 3 : Math.max(0, +S.set.stockMin || 0);
 const stockMin = p => p && p.min != null ? Math.max(0, +p.min || 0) : defaultMin();
@@ -692,11 +693,14 @@ function renderInv() {
     $('#invProdQ').addEventListener('input', e => { S.ui.invQ = e.target.value; renderProdList(); });
     renderProdList();
   } else if (t === 'inv-vent') {
-    const k = invStats();
+    const k = invStats(), porConf = S.sales.filter(s => saleConf(s) === 'pendiente');
     v.innerHTML = `<div class="hd"><div><small>Ventas de la tienda · aparte de créditos</small><h1>Ventas</h1></div></div>
     ${ownerBadge()}<div class="stats"><div class="stat glass tint-ok"><div class="lbl">Ganancia realizada</div><div class="val num">${m0(k.realizada)}</div></div>
     <div class="stat glass ${k.pendiente > 0 ? 'tint-bad' : ''}"><div class="lbl">Pendiente por cobrar</div><div class="val num">${m0(k.pendiente)}</div></div></div>
-    <label class="search" style="margin-top:12px"><span class="ico">${ico('search').replace(/<\/?span[^>]*>/g, '')}</span><input id="invSaleQ" type="search" placeholder="Buscar factura o cliente" value="${esc(S.ui.saleQ)}"></label>
+    <div class="stats" style="margin-top:12px"><div class="stat glass ${porConf.length ? 'tint-bad' : ''}"><div class="lbl">Pagos por confirmar</div><div class="val num">${porConf.length}</div></div>
+    <div class="stat glass"><div class="lbl">Total por confirmar</div><div class="val num">${m0(sum(porConf, s => s.total))}</div></div></div>
+    <div class="seg inv-seg" id="confSeg" style="margin-top:12px"></div>
+    <label class="search"><span class="ico">${ico('search').replace(/<\/?span[^>]*>/g, '')}</span><input id="invSaleQ" type="search" placeholder="Buscar factura o cliente" value="${esc(S.ui.saleQ)}"></label>
     <div class="list" id="invSaleList"></div>`;
     $('#invSaleQ').addEventListener('input', e => { S.ui.saleQ = e.target.value; renderSaleList(); });
     renderSaleList();
@@ -714,7 +718,7 @@ function invResumenHTML() {
   const wmax = Math.max(1, ...wk.map(x => x.v)), wsum = sum(wk, x => x.v);
   const cats = Object.entries(k.categ).sort((a, b) => b[1].v - a[1].v);
   const ult = S.sales.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 4);
-  const low = lowProducts();
+  const low = lowProducts(), porConf = S.sales.filter(s => saleConf(s) === 'pendiente');
   const il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
   return `<div class="hd"><div><small>Dos apps en una · cobros e inventario separados</small><h1>Inventario</h1></div><button class="icon-btn glass" data-a="owner" aria-label="Acceso dueño">${ico(String(S.set.pin || '').trim() && ownerActive() ? 'shield' : 'lock')}</button></div>
   ${ownerBadge()}
@@ -729,11 +733,13 @@ function invResumenHTML() {
     <div class="kpi glass"><div class="lbl">Ganancia neta</div><div class="val num" style="${k.neta < 0 ? 'color:var(--bad)' : ''}">${m0(k.neta)}</div><small> menos gastos</small></div>
     <div class="kpi glass"><div class="lbl">Ventas por cobrar</div><div class="val num">${k.nPend}</div><small>facturas abiertas</small></div>
     <div class="kpi glass"><div class="lbl">Stock por agotarse</div><div class="val num" style="${low.length ? 'color:var(--warn)' : ''}">${low.length}</div><small>${k.agotados} agotados</small></div>
+    <div class="kpi glass"><div class="lbl">Pagos por confirmar</div><div class="val num" style="${porConf.length ? 'color:var(--warn)' : ''}">${porConf.length}</div><small>${m0(sum(porConf, s => s.total))}</small></div>
   </div>
   <div class="btns inv-act"><button class="btn pri" data-a="vender">${ico('cart')} Vender</button><button class="btn" data-a="new-prod">${ico('shirt')} Prenda</button><button class="btn" data-a="new-exp">${ico('coin')} Gasto</button></div>
   <div class="panel glass"><h4><span>Ganancia · 7 días</span><em class="num">${m0(wsum)}</em></h4>
     <div class="chart">${wk.map((x, i) => `<div class="col ${x.v ? '' : 'z'} ${i === 6 ? 't' : ''}"><div class="chart-v num">${x.v ? m0(x.v) : ''}</div><i style="height:${x.v ? Math.max(6, x.v / wmax * 62) : 3}px"></i><span>${i === 6 ? 'Hoy' : dias[x.d.getDay()]}</span></div>`).join('')}</div></div>
   ${low.length ? `<div class="panel glass tint-bad"><h4><span>⚠ Stock por agotarse</span><em>${low.length} prendas</em></h4>${low.map(p => `<div class="prow" data-a="prod" data-id="${p.id}"><div class="pi">${ico('shirt')}</div><div class="pm"><b>${esc(p.nombre)}</b><small>Talla ${esc(p.talla || 'Única')} · aviso ≤ ${stockMin(p) || 0}</small></div><div class="pv" style="color:${isOut(p) ? 'var(--bad)' : 'var(--warn)'}">${p.cantidad} und.${isOut(p) ? ' · Agotado' : ''}</div></div>`).join('')}</div>` : ''}
+  ${porConf.length ? `<div class="panel glass"><h4><span>Pagos por confirmar</span><em>${m0(sum(porConf, s => s.total))}</em></h4>${porConf.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).map(s => `<div class="prow" data-a="sale" data-id="${s.id}"><div class="pi">${ico('receipt')}</div><div class="pm"><b>${esc(s.factura)}</b><small>${fmtS(new Date(s.fecha))} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''}${s.comprobante ? ' · ref. ' + esc(s.comprobante) : ''}</small></div><div class="pv g num">${m0(s.total)}</div></div>`).join('')}</div>` : ''}
   <div class="panel glass"><h4><span>Categorización</span><em>${cats.length} categorías</em></h4>
     ${cats.length ? cats.map(([name, v]) => `<div class="prow" data-a="inv-cat" data-c="${esc(name)}"><div class="pi">${esc(name[0].toUpperCase())}</div><div class="pm"><b>${esc(name)}</b><small>${v.n} prenda${v.n === 1 ? '' : 's'} · ${v.u} unidades</small></div><div class="pv g num">${m0(v.v)}</div></div>`).join('') : empty('box', 'Sin productos clasificados.')}</div>
   ${ult.length ? `<div class="panel glass"><h4><span>Últimas ventas</span><em>${S.sales.length} en total</em></h4>${ult.map(s => `<div class="prow" data-a="sale" data-id="${s.id}"><div class="pi">${ico('receipt')}</div><div class="pm"><b>${esc(s.factura)}</b><small>${fmtS(new Date(s.fecha))} · ${esc(s.metodo)} · ${esc(s.cliente || 'Sin cliente')}</small></div><div class="pv num">${m0(s.total)}</div></div>`).join('')}</div>` : ''}
@@ -749,11 +755,14 @@ function renderProdList() {
   const rows = S.products.filter(p => (S.ui.invCat === 'todos' || (p.categoria || 'General') === S.ui.invCat) && (!q || [p.nombre, p.categoria, p.talla].some(x => String(x || '').toLowerCase().includes(q)))).sort((a, b) => a.nombre.localeCompare(b.nombre));
   list.innerHTML = rows.length ? rows.map(invProdRow).join('') : empty('shirt', S.products.length ? 'Sin resultados.' : 'Aún no hay indumentaria.<br>Toca + para agregar la primera prenda.');
 }
-const invSaleRow = s => `<button class="row glass" data-a="sale" data-id="${s.id}"><div class="avatar">${ico('receipt')}</div><div class="mid"><div class="t">${esc(s.factura)}</div><div class="s">${fmtS(new Date(s.fecha))} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''} · ${s.items.reduce((n, i) => n + i.cant, 0)} und.</div></div><div class="r"><b class="num">${m0(s.total)}</b><span class="chip ${s.estado === 'pendiente' ? 'bad' : 'ok'}">${s.estado === 'pendiente' ? m0(salePend(s)) + ' por cobrar' : '+' + m0(s.ganancia)}</span></div></button>`;
+const invSaleRow = s => `<button class="row glass" data-a="sale" data-id="${s.id}"><div class="avatar">${ico('receipt')}</div><div class="mid"><div class="t">${esc(s.factura)}</div><div class="s">${fmtS(new Date(s.fecha))} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''} · ${s.items.reduce((n, i) => n + i.cant, 0)} und.</div></div><div class="r"><b class="num">${m0(s.total)}</b><span class="chip ${saleConf(s) === 'pendiente' ? 'warn' : 'ok'}">${saleConf(s) === 'pendiente' ? 'Por confirmar' : '✓ Confirmada'}</span>${s.estado === 'pendiente' ? `<span class="chip bad">${m0(salePend(s))} por cobrar</span>` : ''}</div></button>`;
 function renderSaleList() {
   const list = $('#invSaleList'); if (!list) return;
+  const seg = $('#confSeg');
+  if (seg) seg.innerHTML = [['todas', 'Todas'], ['pendiente', 'Por confirmar'], ['confirmado', 'Confirmadas']]
+    .map(([k, t]) => `<button data-a="conf-filter" data-f="${k}" class="${S.ui.confFilter === k ? 'on' : ''}">${t}</button>`).join('');
   const q = S.ui.saleQ.trim().toLowerCase();
-  const rows = S.sales.filter(s => !q || [s.factura, s.cliente, s.metodo, ...s.items.map(i => i.nombre)].some(x => String(x || '').toLowerCase().includes(q))).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  const rows = S.sales.filter(s => (S.ui.confFilter === 'todas' || saleConf(s) === S.ui.confFilter) && (!q || [s.factura, s.cliente, s.metodo, ...s.items.map(i => i.nombre)].some(x => String(x || '').toLowerCase().includes(q)))).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   list.innerHTML = rows.length ? rows.map(invSaleRow).join('') : empty('receipt', S.sales.length ? 'Sin resultados.' : 'Aún no hay ventas.<br>Usa Vender para registrar la primera.');
 }
 
@@ -812,8 +821,11 @@ function openSaleForm() {
     <label class="field"><span>Factura</span><span class="inline"><input name="factura" id="sfact" value="${genInvoice()}" required><button type="button" class="btn sm" data-gen>${ico('edit')} Nueva</button></span></label>
     <div class="two"><label class="field"><span>Fecha y hora</span><input name="fecha" type="datetime-local" required value="${toLocalDT(new Date())}"></label>
     <label class="field"><span>Cliente (opcional)</span><input name="cliente" autocomplete="off" placeholder="Nombre del cliente"></label></div>
-    <label class="field"><span>Método de pago</span><select name="metodo" id="smet">${['Efectivo', 'Transferencia', 'Nequi', 'Daviplata', 'Crédito', 'Otro'].map(x => `<option>${x}</option>`).join('')}</select></label>
+    <label class="field"><span>Método de pago</span><select name="metodo" id="smet">${['Efectivo', 'Transferencia', 'Nequi', 'Daviplata', 'Addi', 'Crédito', 'Otro'].map(x => `<option>${x}</option>`).join('')}</select></label>
     <p class="hint" id="credHint" hidden>Queda pendiente por cobrar. Podrás marcarlo pagado en el detalle de la venta.</p>
+    <label class="field"><span>N.º de referencia / comprobante (Nequi, Davivienda, Addi…)</span><input name="comprobante" autocomplete="off" placeholder="Ej: 9988776655"></label>
+    <label class="field"><span>¿Ya confirmaste el pago en tu app?</span><select name="conf" id="sconf"><option value="confirmado">Sí, confirmado</option><option value="pendiente">No, por confirmar</option></select></label>
+    <p class="hint">Confirma solo después de ver el dinero en Nequi, Davivienda o la app que uses.</p>
     <h3 class="sec"><span>Elementos vendidos</span></h3><div id="saleItems"></div>
     <datalist id="stallas">${TALLAS.map(t => `<option value="${t}">`).join('')}</datalist>
     <button type="button" class="btn blk" data-add>${ico('plus')} Añadir elemento</button>
@@ -843,7 +855,7 @@ function openSaleForm() {
   const f = $('#saleform', el);
   f.addEventListener('input', e => { if (e.target.closest('[data-si]')) totals(); });
   f.addEventListener('change', e => {
-    if (e.target.id === 'smet') { $('#credHint', el).hidden = e.target.value !== 'Crédito'; return; }
+    if (e.target.id === 'smet') { $('#credHint', el).hidden = e.target.value !== 'Crédito'; $('#sconf', el).value = e.target.value === 'Efectivo' ? 'confirmado' : 'pendiente'; return; }
     const row = e.target.closest('[data-si]'); if (!row) return;
     if (e.target.name === 'pid') { const p = prods.find(x => x.id === e.target.value); if (p) { $('[name="talla"]', row).value = p.talla || 'Única'; $('[name="precio"]', row).value = p.precio || 0; $('[name="costo"]', row).value = p.costo || 0; } }
     totals();
@@ -862,7 +874,7 @@ function openSaleForm() {
     for (const [pid, q] of Object.entries(need)) { const p = S.products.find(x => x.id === pid); if (!p || (+p.cantidad || 0) < q) return toast(`Stock insuficiente: ${p ? p.nombre : 'producto'}`); }
     const metodo = fd.get('metodo'), credito = metodo === 'Crédito';
     const snap = items.map(it => { const p = prods.find(x => x.id === it.pid); return { productId: it.pid, nombre: p ? p.nombre : '—', categoria: p ? p.categoria : '', talla: it.talla, cant: it.cant, costo: it.costo, precio: it.precio }; });
-    const s = { id: uid(), factura, fecha: new Date(fd.get('fecha')).toISOString(), cliente: String(fd.get('cliente') || '').trim(), metodo, items: snap, total: t.total, costoTotal: t.total - t.ganancia, ganancia: t.ganancia, estado: credito ? 'pendiente' : 'pagado', abonado: credito ? 0 : t.total, u: Date.now() };
+    const s = { id: uid(), factura, fecha: new Date(fd.get('fecha')).toISOString(), cliente: String(fd.get('cliente') || '').trim(), metodo, items: snap, total: t.total, costoTotal: t.total - t.ganancia, ganancia: t.ganancia, estado: credito ? 'pendiente' : 'pagado', abonado: credito ? 0 : t.total, conf: fd.get('conf') === 'pendiente' ? 'pendiente' : 'confirmado', comprobante: String(fd.get('comprobante') || '').trim(), confFecha: fd.get('conf') === 'pendiente' ? null : new Date().toISOString(), u: Date.now() };
     for (const [pid, q] of Object.entries(need)) { const p = S.products.find(x => x.id === pid); p.cantidad = (+p.cantidad || 0) - q; await save('products', p); }
     const aviso = Object.keys(need).map(pid => S.products.find(x => x.id === pid)).filter(p => p && (isLow(p) || isOut(p)));
     await save('sales', s); closeSheet(el); refreshAll();
@@ -875,9 +887,10 @@ function openSale(id) {
     const s = S.sales.find(x => x.id === id); if (!s) return '';
     const d = new Date(s.fecha), pend = salePend(s), il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
     const lines = s.items.map(it => il(`${esc(it.nombre)} · ${esc(it.talla || 'Única')} × ${it.cant}`, m2(it.cant * it.precio))).join('');
-    return `<div class="head-c"><div class="avatar lg">${ico('receipt')}</div><div style="flex:1;min-width:0"><h3>${esc(s.factura)}</h3><p>${fmtD(d)} ${pad(d.getHours())}:${pad(d.getMinutes())} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''}</p></div><span class="chip ${s.estado === 'pendiente' ? 'bad' : 'ok'}">${s.estado === 'pendiente' ? 'Por cobrar' : 'Pagada'}</span></div>
-    <div class="stmt glass">${lines}<div class="sep"></div>${il('Elementos vendidos', s.items.reduce((n, i) => n + i.cant, 0))}${il('Valor de costo', m2(s.costoTotal))}${il('Valor para el cliente', m2(s.total))}${il('Ganancia', m2(s.ganancia), 'big')}${s.estado === 'pendiente' ? il('Abonado', m2(s.abonado || 0)) + il('Pendiente por cobrar', m2(pend), 'big') : ''}</div>
-    ${pend > 0.5 ? `<button class="btn ok blk" data-a="pay-sale" data-id="${s.id}">${ico('check')} Marcar pagado ${m0(pend)}</button>` : ''}
+    return `<div class="head-c"><div class="avatar lg">${ico('receipt')}</div><div style="flex:1;min-width:0"><h3>${esc(s.factura)}</h3><p>${fmtD(d)} ${pad(d.getHours())}:${pad(d.getMinutes())} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''}</p></div><span class="chip ${s.estado === 'pendiente' ? 'bad' : 'ok'}">${s.estado === 'pendiente' ? 'Por cobrar' : 'Pagada'}</span><span class="chip ${saleConf(s) === 'pendiente' ? 'warn' : 'ok'}">${saleConf(s) === 'pendiente' ? 'Por confirmar' : '✓ Confirmada'}</span></div>
+    <div class="stmt glass">${lines}<div class="sep"></div>${il('Elementos vendidos', s.items.reduce((n, i) => n + i.cant, 0))}${il('Valor de costo', m2(s.costoTotal))}${il('Valor para el cliente', m2(s.total))}${il('Ganancia', m2(s.ganancia), 'big')}${s.estado === 'pendiente' ? il('Abonado', m2(s.abonado || 0)) + il('Pendiente por cobrar', m2(pend), 'big') : ''}<div class="sep"></div>${il('Confirmación del pago', saleConf(s) === 'confirmado' ? '✓ Confirmada' + (s.confFecha ? ' · ' + fmtS(new Date(s.confFecha)) : '') : 'Por confirmar')}${il('Comprobante / referencia', esc(s.comprobante || '—'))}</div>
+    ${saleConf(s) === 'pendiente' ? `<button class="btn ok blk" data-a="confirm-sale" data-id="${s.id}">${ico('shield')} Confirmar pago recibido</button>` : ''}
+    ${pend > 0.5 ? `<button class="btn" data-a="pay-sale" data-id="${s.id}" style="margin-top:10px">${ico('check')} Marcar pagado ${m0(pend)}</button>` : ''}
     <div class="btns" style="margin-top:10px"><button class="btn" data-a="share-sale" data-id="${s.id}">${ico('share')} Compartir factura</button><button class="btn danger" data-a="del-sale" data-id="${s.id}">${ico('trash')} Eliminar</button></div>`;
   }, { full: true });
 }
@@ -885,6 +898,24 @@ async function markSalePaid(id) {
   ownerGate(async () => {
     const s = S.sales.find(x => x.id === id); if (!s) return;
     s.abonado = s.total; s.estado = 'pagado'; await save('sales', s); refreshAll(); toast('Venta marcada como pagada');
+  });
+}
+function confirmSale(id) {
+  ownerGate(() => {
+    const s = S.sales.find(x => x.id === id); if (!s) return;
+    const finish = async comp => {
+      s.conf = 'confirmado'; s.confFecha = new Date().toISOString(); s.comprobante = comp;
+      await save('sales', s); refreshAll(); toast('Pago confirmado');
+    };
+    if (String(s.comprobante || '').trim()) return finish(s.comprobante);
+    const el = sheet('Confirmar pago', `<form id="cfm"><p class="hint">Revisa el dinero en Nequi, Davivienda o la app que uses y escribe el número de referencia/comprobante.</p>
+      <label class="field"><span>Comprobante / referencia</span><input name="comprobante" autocomplete="off" required placeholder="Ej: 9988776655"></label>
+      <button class="btn ok blk" type="submit">${ico('shield')} Confirmar pago</button></form>`);
+    $('#cfm', el).addEventListener('submit', async e => {
+      e.preventDefault(); const comp = String(new FormData(e.target).get('comprobante') || '').trim();
+      if (!comp) return toast('Escribe el comprobante');
+      closeSheet(el); await finish(comp);
+    });
   });
 }
 async function deleteSale(id) {
@@ -897,7 +928,7 @@ async function deleteSale(id) {
 }
 async function shareSale(id) {
   const s = S.sales.find(x => x.id === id); if (!s) return;
-  const txt = [`${S.set.negocio || 'GL Money'}`, `Factura: ${s.factura}`, `Fecha: ${fmtD(new Date(s.fecha))}`, s.cliente ? `Cliente: ${s.cliente}` : '', ...s.items.map(i => `${i.cant}× ${i.nombre} (${i.talla}) — ${m2(i.cant * i.precio)}`), `Total: ${m2(s.total)}`, `Método: ${s.metodo}`, s.estado === 'pendiente' ? `Pendiente: ${m2(salePend(s))}` : 'Pagada'].filter(Boolean).join('\n');
+  const txt = [`${S.set.negocio || 'GL Money'}`, `Factura: ${s.factura}`, `Fecha: ${fmtD(new Date(s.fecha))}`, s.cliente ? `Cliente: ${s.cliente}` : '', ...s.items.map(i => `${i.cant}× ${i.nombre} (${i.talla}) — ${m2(i.cant * i.precio)}`), `Total: ${m2(s.total)}`, `Método: ${s.metodo}`, s.comprobante ? `Comprobante: ${s.comprobante}` : '', s.estado === 'pendiente' ? `Pendiente: ${m2(salePend(s))}` : 'Pagada', `Pago: ${saleConf(s) === 'confirmado' ? 'Confirmado' : 'Por confirmar'}`].filter(Boolean).join('\n');
   if (navigator.share) { try { await navigator.share({ title: 'Factura ' + s.factura, text: txt }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
   try { await navigator.clipboard.writeText(txt); toast('Factura copiada'); } catch { toast('No se pudo compartir'); }
 }
@@ -1167,7 +1198,8 @@ const A = {
   'del-prod': async d => ownerGate(async () => { if (await ask('¿Eliminar esta prenda del inventario?')) { await remove('products', d.id); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); toast('Prenda eliminada'); } }),
   'edit-exp': d => ownerGate(() => openExpenseForm(d.id)),
   'del-exp': async d => ownerGate(async () => { if (await ask('¿Eliminar este gasto?')) { await remove('expenses', d.id); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); toast('Gasto eliminado'); } }),
-  'pay-sale': d => markSalePaid(d.id), 'del-sale': d => deleteSale(d.id), 'share-sale': d => shareSale(d.id),
+  'pay-sale': d => markSalePaid(d.id), 'confirm-sale': d => confirmSale(d.id), 'del-sale': d => deleteSale(d.id), 'share-sale': d => shareSale(d.id),
+  'conf-filter': d => { S.ui.confFilter = d.f; renderSaleList(); },
   'inv-cat': d => { S.ui.invCat = d.c || 'todos'; S.ui.invQ = ''; setTab('inv-prod'); },
   loan: d => openLoan(d.id), client: d => openClient(d.id),
   pay: d => openPayForm(d.id), receipt: d => openReceipt(d.id, d.p),
