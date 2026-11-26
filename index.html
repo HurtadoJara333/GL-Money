@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="vendor/leaflet.css">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=9">
 <title>GL Money</title>
 </head>
 <body>
@@ -27,6 +27,7 @@
     <div id="routeDrawer"></div>
   </section>
   <section id="v-notes" class="view"></section>
+  <section id="v-inv" class="view"></section>
 </main>
 
 <nav id="dock">
@@ -35,6 +36,7 @@
     <button data-a="tab" data-t="loans"><span class="ico" data-i="wallet"></span><b>Créditos</b></button>
     <button data-a="tab" data-t="map"><span class="ico" data-i="map"></span><b>Mapa</b></button>
     <button data-a="tab" data-t="notes"><span class="ico" data-i="note"></span><b>Notas</b></button>
+    <button data-a="mode" id="modeBtn"><span class="ico" data-i="box"></span><b>Inventario</b></button>
   </div>
   <button id="fab" class="fab glass" data-a="fab" aria-label="Agregar"><span class="ico" data-i="plus"></span></button>
 </nav>

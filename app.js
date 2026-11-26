@@ -50,19 +50,30 @@ const IC = {
   user: '<circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>',
   star: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9L3.5 9.7l5.9-.8z"/>',
   shield: '<path d="M12 3 5 6v5.5c0 4.5 3 8 7 9.5 4-1.5 7-5 7-9.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
-  dl: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19.5h14"/>'
+  dl: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19.5h14"/>',
+  box: '<path d="M12 3 3.5 7.3v9.4L12 21l8.5-4.3V7.3z"/><path d="M3.5 7.3 12 11.6l8.5-4.3M12 11.6V21"/>',
+  shirt: '<path d="M8 3.5 5 5l-2 3 2.5 2L7 8.8V20h10V8.8l1.5 1.2L21 8l-2-3-3-1.5a3 3 0 0 1-6 0z"/>',
+  cart: '<circle cx="9" cy="19" r="1.4"/><circle cx="18" cy="19" r="1.4"/><path d="M3 4h2.5l2.2 11h11l2.3-8H6.2"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="3"/><path d="M8.5 10.5V7a3.5 3.5 0 0 1 7 0v3.5"/><circle cx="12" cy="15.5" r="1.2"/>',
+  coin: '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2a3.5 3.5 0 0 0-5.6 1.1c-.7 1.6.4 3.2 2.8 3.7s3.5 2.1 2.8 3.7a3.5 3.5 0 0 1-5.6 1.1M12 6.5v11"/>'
 };
 const ico = n => `<span class="ico"><svg viewBox="0 0 24 24">${IC[n]}</svg></span>`;
 
 /* ============ base de datos (IndexedDB) ============ */
-const STORES = ['clients', 'loans', 'payments', 'notes', 'places', 'meta'];
+const STORES = ['clients', 'loans', 'payments', 'notes', 'places', 'products', 'sales', 'expenses', 'meta'];
+const SYNC_STORES = ['clients', 'loans', 'payments', 'notes', 'places', 'products', 'sales', 'expenses'];
 let db = null;
-const S = { clients: [], loans: [], payments: [], notes: [], places: [], set: { negocio: 'GL Money', tel: '' }, ruta: [], sync: { outbox: {}, last: null, state: 'nosession' }, ui: { tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true } };
+const S = {
+  clients: [], loans: [], payments: [], notes: [], places: [], products: [], sales: [], expenses: [],
+  set: { negocio: 'GL Money', tel: '', pin: '' }, ruta: [],
+  sync: { outbox: {}, last: null, state: 'nosession' },
+  ui: { mode: 'cobros', tab: 'home', filter: 'todos', q: '', nq: '', routeOpen: true, invTab: 'inv-res', invQ: '', invCat: 'todos', saleQ: '', ownerUntil: 0 }
+};
 
 function openDB() {
   return new Promise((ok, no) => {
     if (!window.indexedDB) return no(new Error('sin indexedDB'));
-    const r = indexedDB.open('cobroEmpire', 1);
+    const r = indexedDB.open('cobroEmpire', 2);
     r.onupgradeneeded = () => STORES.forEach(s => { if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s, { keyPath: 'id' }); });
     r.onsuccess = () => ok(r.result);
     r.onerror = () => no(r.error);
@@ -145,6 +156,65 @@ function calc(l, pays, asOf) {
   return { n, cuota, dues, it, abon, capPend, intPend, saldo, paid, vencidas, next, venc: dues[n - 1], debido, estado, late };
 }
 const enriched = () => S.loans.map(l => ({ l, c: calc(l), cl: client(l.clientId) })).filter(x => x.cl);
+
+/* ============ inventario (app independiente) ============ */
+const INV_TABS = ['inv-res', 'inv-prod', 'inv-vent', 'inv-gast'];
+const isInvTab = t => INV_TABS.includes(t);
+const TALLAS = ['Única', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42'];
+const CATS = ['Camisas', 'Pantalones', 'Vestidos', 'Jeans', 'T-shirts', 'Sudaderas', 'Chaquetas', 'Zapatos', 'Accesorios', 'Niños', 'Otro'];
+const invoiceChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genInvoice(date) {
+  const d = date || new Date();
+  for (;;) {
+    const b = new Uint8Array(6); (crypto && crypto.getRandomValues) ? crypto.getRandomValues(b) : b.forEach((_, i) => b[i] = Math.random() * 256);
+    const id = `F${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${[...b].map(x => invoiceChars[x % 32]).join('')}`;
+    if (!S.sales.some(s => s.factura === id)) return id;
+  }
+}
+const salePend = s => Math.max(0, (+s.total || 0) - (+s.abonado || 0));
+function invStats() {
+  const p = S.products, sv = S.sales, ex = S.expenses, today = new Date();
+  const inMonth = d => { const x = new Date(d); return x.getMonth() === today.getMonth() && x.getFullYear() === today.getFullYear(); };
+  const unidades = sum(p, x => +x.cantidad || 0);
+  const valorVenta = sum(p, x => (+x.cantidad || 0) * (+x.precio || 0));
+  const valorCosto = sum(p, x => (+x.cantidad || 0) * (+x.costo || 0));
+  const esperada = valorVenta - valorCosto;
+  const realizada = sum(sv, s => +s.ganancia || 0);
+  const hoy = sv.filter(s => sameDay(new Date(s.fecha), today));
+  const mes = sv.filter(s => inMonth(s.fecha));
+  const gastos = sum(ex, e => +e.valor || 0);
+  const categ = {};
+  p.forEach(x => { const k = x.categoria || 'General'; categ[k] = categ[k] || { n: 0, u: 0, v: 0 }; categ[k].n++; categ[k].u += +x.cantidad || 0; categ[k].v += (+x.cantidad || 0) * (+x.precio || 0); });
+  return {
+    unidades, valorVenta, valorCosto, esperada, realizada, neta: realizada - gastos,
+    ganHoy: sum(hoy, s => +s.ganancia || 0), ventasHoy: hoy.length,
+    ventasMes: sum(mes, s => +s.total || 0), nVentasMes: mes.length,
+    pendiente: sum(sv.filter(s => s.estado === 'pendiente'), salePend),
+    nPend: sv.filter(s => s.estado === 'pendiente').length,
+    gastos, gastosMes: sum(ex.filter(e => inMonth(e.fecha)), e => +e.valor || 0),
+    margen: valorVenta ? esperada / valorVenta * 100 : 0, categ
+  };
+}
+/* acceso de dueño: se activa con el PIN de ajustes y dura 30 min */
+const ownerActive = () => !String(S.set.pin || '').trim() || (S.ui.ownerUntil && Date.now() < S.ui.ownerUntil);
+function ownerGate(fn) {
+  if (ownerActive()) return fn();
+  const el = sheet('Solo dueño', `<form id="of"><p class="hint">Ingresa tu PIN para vender y modificar el inventario.</p>
+    <label class="field"><span>PIN de dueño</span><input name="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" required></label>
+    <button class="btn pri blk" type="submit">${ico('shield')} Desbloquear</button></form>`);
+  $('#of', el).addEventListener('submit', e => {
+    e.preventDefault();
+    if (String(new FormData(e.target).get('pin')).trim() !== String(S.set.pin).trim()) return toast('PIN incorrecto');
+    S.ui.ownerUntil = Date.now() + 30 * 60 * 1000;
+    closeSheet(el); renderInv(); fn(); toast('Modo dueño activo por 30 min');
+  });
+  setTimeout(() => { const i = $('input', el); i && i.focus(); }, 420);
+}
+const ownerBadge = () => {
+  const pin = String(S.set.pin || '').trim();
+  const label = !pin ? 'Sin PIN · pon uno en Ajustes' : ownerActive() ? 'Modo dueño activo' : 'Solo lectura · toca para desbloquear';
+  return `<button class="owner-badge ${pin && ownerActive() ? 'on' : ''}" data-a="owner">${ico(pin && ownerActive() ? 'shield' : 'lock')}<span>${label}</span></button>`;
+};
 
 /* ============ UI base ============ */
 let toastT;
@@ -263,7 +333,7 @@ function rowLoan({ l, c, cl }) {
 }
 
 function renderHome() {
-  const all = enriched(), act = all.filter(x => x.c.estado !== 'pagado');
+  const all = enriched(), act = all.filter(x => x.c.estado !== 'pagado'), ik = invStats();
   const porCobrar = sum(act, x => x.c.saldo), contratado = sum(act, x => x.l.total), cobrado = sum(act, x => x.c.abon);
   const today = new Date();
   const hoy = S.payments.filter(p => sameDay(new Date(p.fecha), today));
@@ -308,6 +378,7 @@ function renderHome() {
   <h3 class="sec"><span>Para cobrar</span><span>${dueNow.length}</span></h3>
   <div class="list">${dueNow.length ? dueNow.map(rowLoan).join('') : empty('check', 'Sin cobros pendientes.')}</div>
   ${prox.length ? `<h3 class="sec"><span>Próximos 7 días</span><span>${prox.length}</span></h3><div class="list">${prox.map(rowLoan).join('')}</div>` : ''}
+  <div class="panel glass inv-entry" data-a="open-inv"><div class="lbl">GL Inventario · app aparte</div><div class="inv-entry-row"><div><b>Valor de la mercancía</b><span>${ik.unidades} unidades · ${m0(ik.pendiente)} por cobrar</span></div><b class="num">${m0(ik.valorVenta)}</b></div><div class="inv-entry-go">Abrir inventario ${ico('box')}</div></div>
   <div class="quote"><b>GL</b> Money · cada peso cuenta</div>`;
 }
 
@@ -563,6 +634,249 @@ function openNoteForm(id) {
   });
 }
 
+/* ============ inventario · vistas ============ */
+function renderInv() {
+  const t = S.ui.invTab, v = $('#v-inv');
+  if (t === 'inv-res') v.innerHTML = invResumenHTML();
+  else if (t === 'inv-prod') {
+    v.innerHTML = `<div class="hd"><div><small>${S.products.length} prenda${S.products.length === 1 ? '' : 's'} · ${invStats().unidades} unidades</small><h1>Indumentaria</h1></div></div>
+    ${ownerBadge()}<label class="search"><span class="ico">${ico('search').replace(/<\/?span[^>]*>/g, '')}</span><input id="invProdQ" type="search" placeholder="Buscar prenda, categoría o talla" value="${esc(S.ui.invQ)}"></label>
+    <div class="seg inv-seg" id="invCatSeg"></div><div class="list" id="invProdList"></div>`;
+    $('#invProdQ').addEventListener('input', e => { S.ui.invQ = e.target.value; renderProdList(); });
+    renderProdList();
+  } else if (t === 'inv-vent') {
+    const k = invStats();
+    v.innerHTML = `<div class="hd"><div><small>Ventas de la tienda · aparte de créditos</small><h1>Ventas</h1></div></div>
+    ${ownerBadge()}<div class="stats"><div class="stat glass tint-ok"><div class="lbl">Ganancia realizada</div><div class="val num">${m0(k.realizada)}</div></div>
+    <div class="stat glass ${k.pendiente > 0 ? 'tint-bad' : ''}"><div class="lbl">Pendiente por cobrar</div><div class="val num">${m0(k.pendiente)}</div></div></div>
+    <label class="search" style="margin-top:12px"><span class="ico">${ico('search').replace(/<\/?span[^>]*>/g, '')}</span><input id="invSaleQ" type="search" placeholder="Buscar factura o cliente" value="${esc(S.ui.saleQ)}"></label>
+    <div class="list" id="invSaleList"></div>`;
+    $('#invSaleQ').addEventListener('input', e => { S.ui.saleQ = e.target.value; renderSaleList(); });
+    renderSaleList();
+  } else {
+    const k = invStats();
+    v.innerHTML = `<div class="hd"><div><small>Egresos de la tienda</small><h1>Gastos</h1></div></div>${ownerBadge()}
+    <div class="hero glass tint-bad"><div class="lbl">Total de gastos</div><div class="big num">${m0(k.gastos)}</div><div class="sub"><span>Este mes ${m0(k.gastosMes)}</span><span>${S.expenses.length} registro${S.expenses.length === 1 ? '' : 's'}</span></div></div>
+    <div class="btns inv-act"><button class="btn pri" data-a="new-exp">${ico('plus')} Nuevo gasto</button></div>
+    <div class="list" style="margin-top:14px">${S.expenses.length ? S.expenses.slice().sort((a, b) => b.fecha.localeCompare(a.fecha)).map(e => `<button class="row glass" data-a="exp" data-id="${e.id}"><div class="avatar">${ico('coin')}</div><div class="mid"><div class="t">${esc(e.descripcion || 'Gasto')}</div><div class="s">${esc(e.categoria || 'Otro')} · ${fmtD(new Date(e.fecha))}</div></div><div class="r"><b class="num" style="color:var(--bad)">-${m0(e.valor)}</b></div></button>`).join('') : empty('coin', 'Aún no hay gastos.<br>Toca + para registrar el primero.')}</div>`;
+  }
+}
+function invResumenHTML() {
+  const k = invStats(), today = new Date(), dias = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+  const wk = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(d.getDate() - (6 - i)); return { d, v: sum(S.sales.filter(s => sameDay(new Date(s.fecha), d)), s => +s.ganancia || 0) }; });
+  const wmax = Math.max(1, ...wk.map(x => x.v)), wsum = sum(wk, x => x.v);
+  const cats = Object.entries(k.categ).sort((a, b) => b[1].v - a[1].v);
+  const ult = S.sales.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 4);
+  const il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
+  return `<div class="hd"><div><small>Dos apps en una · cobros e inventario separados</small><h1>Inventario</h1></div><button class="icon-btn glass" data-a="owner" aria-label="Acceso dueño">${ico(String(S.set.pin || '').trim() && ownerActive() ? 'shield' : 'lock')}</button></div>
+  ${ownerBadge()}
+  <div class="hero glass tint-acc"><div class="lbl">Valor total de toda la mercancía</div><div class="big num">${m0(k.valorVenta)}</div><div class="bar"><i style="width:${Math.min(100, k.margen).toFixed(1)}%"></i></div><div class="sub"><span>${k.unidades} unidades · ${S.products.length} prendas</span><span>Margen ${k.margen.toFixed(0)}%</span></div></div>
+  <div class="stats"><div class="stat glass tint-ok"><div class="lbl">Ganancia diaria</div><div class="val num">${m0(k.ganHoy)}</div></div><div class="stat glass ${k.pendiente > 0 ? 'tint-bad' : ''}"><div class="lbl">Pendiente por cobrar</div><div class="val num">${m0(k.pendiente)}</div></div></div>
+  <div class="stats" style="margin-top:12px"><div class="stat glass"><div class="lbl">Ventas del mes</div><div class="val num">${m0(k.ventasMes)}</div></div><div class="stat glass"><div class="lbl">Gastos del mes</div><div class="val num" style="color:var(--bad)">${m0(k.gastosMes)}</div></div></div>
+  <div class="kpis">
+    <div class="kpi glass"><div class="lbl">Valor de costo</div><div class="val num">${m0(k.valorCosto)}</div><small>en stock</small></div>
+    <div class="kpi glass"><div class="lbl">Precio final cliente</div><div class="val num">${m0(k.valorVenta)}</div><small>en venta</small></div>
+    <div class="kpi glass"><div class="lbl">Ganancia esperada</div><div class="val num">${m0(k.esperada)}</div><small>si se vende todo</small></div>
+    <div class="kpi glass"><div class="lbl">Ganancia realizada</div><div class="val num">${m0(k.realizada)}</div><small>${S.sales.length} ventas</small></div>
+    <div class="kpi glass"><div class="lbl">Ganancia neta</div><div class="val num" style="${k.neta < 0 ? 'color:var(--bad)' : ''}">${m0(k.neta)}</div><small> menos gastos</small></div>
+    <div class="kpi glass"><div class="lbl">Ventas por cobrar</div><div class="val num">${k.nPend}</div><small>facturas abiertas</small></div>
+  </div>
+  <div class="btns inv-act"><button class="btn pri" data-a="vender">${ico('cart')} Vender</button><button class="btn" data-a="new-prod">${ico('shirt')} Prenda</button><button class="btn" data-a="new-exp">${ico('coin')} Gasto</button></div>
+  <div class="panel glass"><h4><span>Ganancia · 7 días</span><em class="num">${m0(wsum)}</em></h4>
+    <div class="chart">${wk.map((x, i) => `<div class="col ${x.v ? '' : 'z'} ${i === 6 ? 't' : ''}"><div class="chart-v num">${x.v ? m0(x.v) : ''}</div><i style="height:${x.v ? Math.max(6, x.v / wmax * 62) : 3}px"></i><span>${i === 6 ? 'Hoy' : dias[x.d.getDay()]}</span></div>`).join('')}</div></div>
+  <div class="panel glass"><h4><span>Categorización</span><em>${cats.length} categorías</em></h4>
+    ${cats.length ? cats.map(([name, v]) => `<div class="prow" data-a="inv-cat" data-c="${esc(name)}"><div class="pi">${esc(name[0].toUpperCase())}</div><div class="pm"><b>${esc(name)}</b><small>${v.n} prenda${v.n === 1 ? '' : 's'} · ${v.u} unidades</small></div><div class="pv g num">${m0(v.v)}</div></div>`).join('') : empty('box', 'Sin productos clasificados.')}</div>
+  ${ult.length ? `<div class="panel glass"><h4><span>Últimas ventas</span><em>${S.sales.length} en total</em></h4>${ult.map(s => `<div class="prow" data-a="sale" data-id="${s.id}"><div class="pi">${ico('receipt')}</div><div class="pm"><b>${esc(s.factura)}</b><small>${fmtS(new Date(s.fecha))} · ${esc(s.metodo)} · ${esc(s.cliente || 'Sin cliente')}</small></div><div class="pv num">${m0(s.total)}</div></div>`).join('')}</div>` : ''}
+  <div class="quote"><b>GL</b> Inventario · ventas y stock en un solo lugar</div>`;
+}
+const invProdRow = p => `<button class="row glass" data-a="prod" data-id="${p.id}"><div class="avatar">${ico('shirt')}</div><div class="mid"><div class="t">${esc(p.nombre)}</div><div class="s">${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')} · ${p.cantidad} und.</div></div><div class="r"><b class="num">${m0(p.precio)}</b><small>costo ${m0(p.costo)}</small><span class="chip ok">+${m0((+p.precio - +p.costo) * (+p.cantidad || 0))}</span></div></button>`;
+function renderProdList() {
+  const seg = $('#invCatSeg'), list = $('#invProdList'); if (!seg || !list) return;
+  const cats = [...new Set(S.products.map(p => p.categoria || 'General'))].sort();
+  if (S.ui.invCat !== 'todos' && !cats.includes(S.ui.invCat)) S.ui.invCat = 'todos';
+  seg.innerHTML = [['todos', 'Todas'], ...cats.map(c => [c, c])].map(([k, t]) => `<button data-a="inv-cat" data-c="${esc(k)}" class="${S.ui.invCat === k ? 'on' : ''}">${esc(t)}</button>`).join('');
+  const q = S.ui.invQ.trim().toLowerCase();
+  const rows = S.products.filter(p => (S.ui.invCat === 'todos' || (p.categoria || 'General') === S.ui.invCat) && (!q || [p.nombre, p.categoria, p.talla].some(x => String(x || '').toLowerCase().includes(q)))).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  list.innerHTML = rows.length ? rows.map(invProdRow).join('') : empty('shirt', S.products.length ? 'Sin resultados.' : 'Aún no hay indumentaria.<br>Toca + para agregar la primera prenda.');
+}
+const invSaleRow = s => `<button class="row glass" data-a="sale" data-id="${s.id}"><div class="avatar">${ico('receipt')}</div><div class="mid"><div class="t">${esc(s.factura)}</div><div class="s">${fmtS(new Date(s.fecha))} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''} · ${s.items.reduce((n, i) => n + i.cant, 0)} und.</div></div><div class="r"><b class="num">${m0(s.total)}</b><span class="chip ${s.estado === 'pendiente' ? 'bad' : 'ok'}">${s.estado === 'pendiente' ? m0(salePend(s)) + ' por cobrar' : '+' + m0(s.ganancia)}</span></div></button>`;
+function renderSaleList() {
+  const list = $('#invSaleList'); if (!list) return;
+  const q = S.ui.saleQ.trim().toLowerCase();
+  const rows = S.sales.filter(s => !q || [s.factura, s.cliente, s.metodo, ...s.items.map(i => i.nombre)].some(x => String(x || '').toLowerCase().includes(q))).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  list.innerHTML = rows.length ? rows.map(invSaleRow).join('') : empty('receipt', S.sales.length ? 'Sin resultados.' : 'Aún no hay ventas.<br>Usa Vender para registrar la primera.');
+}
+
+/* ---- prendas ---- */
+function openProductForm(id) {
+  const base = id ? S.products.find(p => p.id === id) : { categoria: 'Camisas', talla: 'M', cantidad: 1, costo: 0, precio: 0 };
+  if (!base) return;
+  const el = sheet(id ? 'Editar prenda' : 'Nueva prenda', `<form id="pform">
+    <label class="field"><span>Prenda</span><input name="nombre" required autocomplete="off" placeholder="Ej: Camisa Oxford blanca" value="${esc(base.nombre || '')}"></label>
+    <label class="field"><span>Categoría</span><input name="categoria" list="catList" autocomplete="off" value="${esc(base.categoria || '')}"><datalist id="catList">${[...new Set([...CATS, ...S.products.map(p => p.categoria)])].filter(Boolean).map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+    <div class="two"><label class="field"><span>Talla</span><input name="talla" list="tallaList" value="${esc(base.talla || 'Única')}"></label>
+    <label class="field"><span>Cantidad</span><input name="cantidad" id="pa" type="number" inputmode="numeric" min="0" step="1" value="${base.cantidad || 0}"></label></div>
+    <datalist id="tallaList">${TALLAS.map(t => `<option value="${t}">`).join('')}</datalist>
+    <div class="two"><label class="field"><span>Valor de costo del producto</span><input name="costo" id="pc" type="number" inputmode="decimal" min="0" step="any" value="${base.costo || 0}"></label>
+    <label class="field"><span>Precio final al cliente</span><input name="precio" id="pp" type="number" inputmode="decimal" min="0" step="any" value="${base.precio || 0}"></label></div>
+    <label class="field"><span>Nota (opcional)</span><input name="nota" autocomplete="off" value="${esc(base.nota || '')}"></label>
+    <div class="calc glass"><div><span>Ganancia por unidad</span><b class="num" id="pg">$0.00</b></div><div><span>Valor en inventario</span><b class="num" id="pv">$0.00</b></div></div>
+    <button class="btn pri blk" type="submit">${ico('check')} Guardar prenda</button></form>`, { full: true });
+  const f = $('#pform', el), C = $('#pc', el), P = $('#pp', el), A = $('#pa', el);
+  const upd = () => { $('#pg', el).textContent = m2((+P.value || 0) - (+C.value || 0)); $('#pv', el).textContent = m2((+A.value || 0) * (+P.value || 0)); };
+  [C, P, A].forEach(x => x.addEventListener('input', upd)); upd();
+  f.addEventListener('submit', async e => {
+    e.preventDefault(); const fd = new FormData(f);
+    const nombre = String(fd.get('nombre') || '').trim(); if (!nombre) return toast('Escribe el nombre de la prenda');
+    const p = { ...base, id: base.id || uid(), nombre, categoria: String(fd.get('categoria') || '').trim() || 'General', talla: String(fd.get('talla') || '').trim() || 'Única', cantidad: Math.max(0, Math.floor(+fd.get('cantidad') || 0)), costo: +fd.get('costo') || 0, precio: +fd.get('precio') || 0, nota: String(fd.get('nota') || '').trim() };
+    if (p.precio < p.costo) return toast('El precio no puede ser menor al costo');
+    await save('products', p); closeSheet(el); refreshAll(); toast(id ? 'Prenda actualizada' : 'Prenda agregada');
+  });
+}
+function openProduct(id) {
+  const el = sheet('Prenda', () => {
+    const p = S.products.find(x => x.id === id); if (!p) return '';
+    const il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
+    return `<div class="head-c"><div class="avatar lg">${ico('shirt')}</div><div style="flex:1"><h3>${esc(p.nombre)}</h3><p>${esc(p.categoria || 'General')} · Talla ${esc(p.talla || 'Única')}</p></div><span class="chip ${p.cantidad > 0 ? 'ok' : 'bad'}">${p.cantidad} und.</span></div>
+    <div class="stmt glass">${il('Valor de costo', m2(p.costo))}${il('Precio final al cliente', m2(p.precio))}${il('Ganancia por unidad', m2(+p.precio - +p.costo))}${il('Valor en inventario', m2((+p.precio) * (+p.cantidad || 0)))}${il('Ganancia esperada', m2((+p.precio - +p.costo) * (+p.cantidad || 0)))}${p.nota ? il('Nota', esc(p.nota)) : ''}</div>
+    <div class="btns"><button class="btn pri sm" data-a="edit-prod" data-id="${p.id}">${ico('edit')} Editar</button><button class="btn danger sm" data-a="del-prod" data-id="${p.id}">${ico('trash')} Eliminar</button></div>
+    <h3 class="sec"><span>Reponer stock</span></h3><form class="btns" data-stock="${p.id}"><input class="field" name="q" type="number" min="1" step="1" value="1" style="flex:1;margin:0;border-radius:99px;padding:12px 16px"><button class="btn ok" type="submit">${ico('plus')} Añadir</button></form>`;
+  }, { full: true });
+  el.addEventListener('submit', async e => {
+    const f = e.target.closest('[data-stock]'); if (!f) return;
+    e.preventDefault(); const q = Math.floor(+new FormData(f).get('q') || 0); if (q < 1) return toast('Cantidad inválida');
+    const p = S.products.find(x => x.id === f.dataset.stock); if (!p) return;
+    p.cantidad = (+p.cantidad || 0) + q; await save('products', p); refreshAll(); toast(`${q} unidad${q === 1 ? '' : 'es'} agregada${q === 1 ? '' : 's'}`);
+  });
+}
+
+/* ---- ventas ---- */
+function openSaleForm() {
+  const prods = S.products.filter(p => +p.cantidad > 0);
+  if (!prods.length) return toast('No hay stock disponible para vender');
+  const dflt = () => { const p = prods[0]; return { pid: p.id, talla: p.talla || 'Única', cant: 1, precio: +p.precio || 0, costo: +p.costo || 0 }; };
+  const items = [dflt()];
+  const el = sheet('Vender', `<form id="saleform">
+    <label class="field"><span>Factura</span><span class="inline"><input name="factura" id="sfact" value="${genInvoice()}" required><button type="button" class="btn sm" data-gen>${ico('edit')} Nueva</button></span></label>
+    <div class="two"><label class="field"><span>Fecha y hora</span><input name="fecha" type="datetime-local" required value="${toLocalDT(new Date())}"></label>
+    <label class="field"><span>Cliente (opcional)</span><input name="cliente" autocomplete="off" placeholder="Nombre del cliente"></label></div>
+    <label class="field"><span>Método de pago</span><select name="metodo" id="smet">${['Efectivo', 'Transferencia', 'Nequi', 'Daviplata', 'Crédito', 'Otro'].map(x => `<option>${x}</option>`).join('')}</select></label>
+    <p class="hint" id="credHint" hidden>Queda pendiente por cobrar. Podrás marcarlo pagado en el detalle de la venta.</p>
+    <h3 class="sec"><span>Elementos vendidos</span></h3><div id="saleItems"></div>
+    <datalist id="stallas">${TALLAS.map(t => `<option value="${t}">`).join('')}</datalist>
+    <button type="button" class="btn blk" data-add>${ico('plus')} Añadir elemento</button>
+    <div class="calc glass" style="margin-top:14px"><div><span>Valor total de la venta</span><b class="num" id="stot">$0.00</b></div><div><span>Ganancia</span><b class="num" id="sgan" style="color:var(--ok)">$0.00</b></div></div>
+    <button class="btn pri blk" type="submit" style="margin-top:14px">${ico('check')} Registrar venta</button></form>`, { full: true });
+  const itemHTML = (it, i) => `<div class="sale-item glass" data-si="${i}"><div class="si-top"><b>Elemento ${i + 1}</b><button type="button" class="mini" data-rm="${i}" aria-label="Quitar elemento">${ico('x')}</button></div>
+    <label class="field"><span>Producto</span><select name="pid">${prods.map(p => `<option value="${p.id}" ${p.id === it.pid ? 'selected' : ''}>${esc(p.nombre)} · ${esc(p.talla || 'Única')} · ${p.cantidad} und.</option>`).join('')}</select></label>
+    <div class="two"><label class="field"><span>Talla</span><input name="talla" list="stallas" value="${esc(it.talla)}"></label><label class="field"><span>Cantidad</span><input name="cant" type="number" min="1" step="1" value="${it.cant}"></label></div>
+    <div class="two"><label class="field"><span>Precio final al cliente</span><input name="precio" type="number" min="0" step="any" value="${it.precio}"></label><label class="field"><span>Valor de costo</span><input name="costo" type="number" min="0" step="any" value="${it.costo}"></label></div>
+    <div class="si-sub">Subtotal <b class="num" data-sub>$0.00</b> <span data-ug></span></div></div>`;
+  const readItems = () => $$('[data-si]', el).forEach(row => {
+    const i = +row.dataset.si;
+    items[i] = { pid: $('[name="pid"]', row).value, talla: $('[name="talla"]', row).value, cant: Math.max(1, Math.floor(+$('[name="cant"]', row).value || 1)), precio: +$('[name="precio"]', row).value || 0, costo: +$('[name="costo"]', row).value || 0 };
+  });
+  const totals = () => {
+    let t = 0, g = 0;
+    $$('[data-si]', el).forEach(row => {
+      const c = Math.max(1, Math.floor(+$('[name="cant"]', row).value || 1)), pr = +$('[name="precio"]', row).value || 0, co = +$('[name="costo"]', row).value || 0;
+      $('[data-sub]', row).textContent = m2(c * pr); $('[data-ug]', row).textContent = `· ganancia ${m2(c * (pr - co))}`;
+      t += c * pr; g += c * (pr - co);
+    });
+    $('#stot', el).textContent = m2(t); $('#sgan', el).textContent = m2(g);
+    return { total: t, ganancia: g };
+  };
+  const paint = () => { $('#saleItems', el).innerHTML = items.map(itemHTML).join(''); totals(); };
+  paint();
+  const f = $('#saleform', el);
+  f.addEventListener('input', e => { if (e.target.closest('[data-si]')) totals(); });
+  f.addEventListener('change', e => {
+    if (e.target.id === 'smet') { $('#credHint', el).hidden = e.target.value !== 'Crédito'; return; }
+    const row = e.target.closest('[data-si]'); if (!row) return;
+    if (e.target.name === 'pid') { const p = prods.find(x => x.id === e.target.value); if (p) { $('[name="talla"]', row).value = p.talla || 'Única'; $('[name="precio"]', row).value = p.precio || 0; $('[name="costo"]', row).value = p.costo || 0; } }
+    totals();
+  });
+  f.addEventListener('click', e => {
+    if (e.target.closest('[data-gen]')) { $('#sfact', el).value = genInvoice(); return; }
+    if (e.target.closest('[data-add]')) { readItems(); items.push(dflt()); paint(); return; }
+    const rm = e.target.closest('[data-rm]'); if (rm) { readItems(); items.splice(+rm.dataset.rm, 1); if (!items.length) items.push(dflt()); paint(); }
+  });
+  f.addEventListener('submit', async e => {
+    e.preventDefault(); readItems(); const t = totals(), fd = new FormData(f);
+    const factura = String(fd.get('factura') || '').trim();
+    if (!factura) return toast('Falta la factura');
+    if (S.sales.some(s => s.factura === factura)) return toast('Esa factura ya existe');
+    const need = {}; items.forEach(it => { need[it.pid] = (need[it.pid] || 0) + it.cant; });
+    for (const [pid, q] of Object.entries(need)) { const p = S.products.find(x => x.id === pid); if (!p || (+p.cantidad || 0) < q) return toast(`Stock insuficiente: ${p ? p.nombre : 'producto'}`); }
+    const metodo = fd.get('metodo'), credito = metodo === 'Crédito';
+    const snap = items.map(it => { const p = prods.find(x => x.id === it.pid); return { productId: it.pid, nombre: p ? p.nombre : '—', categoria: p ? p.categoria : '', talla: it.talla, cant: it.cant, costo: it.costo, precio: it.precio }; });
+    const s = { id: uid(), factura, fecha: new Date(fd.get('fecha')).toISOString(), cliente: String(fd.get('cliente') || '').trim(), metodo, items: snap, total: t.total, costoTotal: t.total - t.ganancia, ganancia: t.ganancia, estado: credito ? 'pendiente' : 'pagado', abonado: credito ? 0 : t.total, u: Date.now() };
+    for (const [pid, q] of Object.entries(need)) { const p = S.products.find(x => x.id === pid); p.cantidad = (+p.cantidad || 0) - q; await save('products', p); }
+    await save('sales', s); closeSheet(el); refreshAll(); toast('Venta registrada');
+    setTimeout(() => openSale(s.id), 350);
+  });
+}
+function openSale(id) {
+  sheet('Factura', () => {
+    const s = S.sales.find(x => x.id === id); if (!s) return '';
+    const d = new Date(s.fecha), pend = salePend(s), il = (a, b, cls = '') => `<div class="ln ${cls}"><span>${a}</span><b class="num">${b}</b></div>`;
+    const lines = s.items.map(it => il(`${esc(it.nombre)} · ${esc(it.talla || 'Única')} × ${it.cant}`, m2(it.cant * it.precio))).join('');
+    return `<div class="head-c"><div class="avatar lg">${ico('receipt')}</div><div style="flex:1;min-width:0"><h3>${esc(s.factura)}</h3><p>${fmtD(d)} ${pad(d.getHours())}:${pad(d.getMinutes())} · ${esc(s.metodo)}${s.cliente ? ' · ' + esc(s.cliente) : ''}</p></div><span class="chip ${s.estado === 'pendiente' ? 'bad' : 'ok'}">${s.estado === 'pendiente' ? 'Por cobrar' : 'Pagada'}</span></div>
+    <div class="stmt glass">${lines}<div class="sep"></div>${il('Elementos vendidos', s.items.reduce((n, i) => n + i.cant, 0))}${il('Valor de costo', m2(s.costoTotal))}${il('Valor para el cliente', m2(s.total))}${il('Ganancia', m2(s.ganancia), 'big')}${s.estado === 'pendiente' ? il('Abonado', m2(s.abonado || 0)) + il('Pendiente por cobrar', m2(pend), 'big') : ''}</div>
+    ${pend > 0.5 ? `<button class="btn ok blk" data-a="pay-sale" data-id="${s.id}">${ico('check')} Marcar pagado ${m0(pend)}</button>` : ''}
+    <div class="btns" style="margin-top:10px"><button class="btn" data-a="share-sale" data-id="${s.id}">${ico('share')} Compartir factura</button><button class="btn danger" data-a="del-sale" data-id="${s.id}">${ico('trash')} Eliminar</button></div>`;
+  }, { full: true });
+}
+async function markSalePaid(id) {
+  ownerGate(async () => {
+    const s = S.sales.find(x => x.id === id); if (!s) return;
+    s.abonado = s.total; s.estado = 'pagado'; await save('sales', s); refreshAll(); toast('Venta marcada como pagada');
+  });
+}
+async function deleteSale(id) {
+  ownerGate(async () => {
+    if (!await ask('¿Eliminar la venta? El stock de los elementos vendidos volverá al inventario.', 'Eliminar venta')) return;
+    const s = S.sales.find(x => x.id === id); if (!s) return;
+    for (const it of s.items) { const p = S.products.find(x => x.id === it.productId); if (p) { p.cantidad = (+p.cantidad || 0) + it.cant; await save('products', p); } }
+    await remove('sales', id); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); toast('Venta eliminada y stock restaurado');
+  });
+}
+async function shareSale(id) {
+  const s = S.sales.find(x => x.id === id); if (!s) return;
+  const txt = [`${S.set.negocio || 'GL Money'}`, `Factura: ${s.factura}`, `Fecha: ${fmtD(new Date(s.fecha))}`, s.cliente ? `Cliente: ${s.cliente}` : '', ...s.items.map(i => `${i.cant}× ${i.nombre} (${i.talla}) — ${m2(i.cant * i.precio)}`), `Total: ${m2(s.total)}`, `Método: ${s.metodo}`, s.estado === 'pendiente' ? `Pendiente: ${m2(salePend(s))}` : 'Pagada'].filter(Boolean).join('\n');
+  if (navigator.share) { try { await navigator.share({ title: 'Factura ' + s.factura, text: txt }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  try { await navigator.clipboard.writeText(txt); toast('Factura copiada'); } catch { toast('No se pudo compartir'); }
+}
+
+/* ---- gastos ---- */
+function openExpenseForm(id) {
+  const base = id ? S.expenses.find(e => e.id === id) : { categoria: 'Compra de mercancía', fecha: toISO(new Date()) };
+  if (!base) return;
+  const el = sheet(id ? 'Editar gasto' : 'Nuevo gasto', `<form id="eform">
+    <label class="field"><span>Descripción</span><input name="descripcion" required autocomplete="off" placeholder="Ej: Arriendo del local" value="${esc(base.descripcion || '')}"></label>
+    <div class="two"><label class="field"><span>Categoría</span><select name="categoria">${['Compra de mercancía', 'Arriendo', 'Transporte', 'Servicios', 'Publicidad', 'Otro'].map(c => `<option ${c === base.categoria ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+    <label class="field"><span>Valor</span><input name="valor" type="number" inputmode="decimal" min="0" step="any" required value="${base.valor || ''}"></label></div>
+    <label class="field"><span>Fecha</span><input name="fecha" type="date" required value="${base.fecha}"></label>
+    <button class="btn pri blk" type="submit">${ico('check')} Guardar gasto</button></form>`, { full: true });
+  $('#eform', el).addEventListener('submit', async e => {
+    e.preventDefault(); const fd = new FormData(e.target);
+    const ex = { ...base, id: base.id || uid(), descripcion: String(fd.get('descripcion')).trim(), categoria: fd.get('categoria'), valor: +fd.get('valor') || 0, fecha: fd.get('fecha'), u: Date.now() };
+    if (!ex.descripcion || !(ex.valor > 0)) return toast('Revisa descripción y valor');
+    await save('expenses', ex); closeSheet(el); refreshAll(); toast(id ? 'Gasto actualizado' : 'Gasto registrado');
+  });
+}
+function openExpense(id) {
+  ownerGate(() => {
+    const e = S.expenses.find(x => x.id === id); if (!e) return;
+    sheet('Gasto', () => {
+      const g = S.expenses.find(x => x.id === id); if (!g) return '';
+      return `<div class="head-c"><div class="avatar lg">${ico('coin')}</div><div style="flex:1"><h3>${esc(g.descripcion)}</h3><p>${esc(g.categoria)} · ${fmtD(new Date(g.fecha))}</p></div></div>
+      <div class="stmt glass"><div class="ln"><span>Valor</span><b class="num" style="color:var(--bad)">${m2(g.valor)}</b></div></div>
+      <div class="btns"><button class="btn pri" data-a="edit-exp" data-id="${g.id}">${ico('edit')} Editar</button><button class="btn danger" data-a="del-exp" data-id="${g.id}">${ico('trash')} Eliminar</button></div>`;
+    }, { full: true });
+  });
+}
+
 /* ============ mapa y rutas ============ */
 let map, layer, routeLine, meMarker, lastCenter = null;
 function stopData() {
@@ -673,16 +987,18 @@ function openVerify() {
 
 /* ============ ajustes / respaldo ============ */
 function openSettings() {
-  const el = sheet('Ajustes', `<form id="sf"><label class="field"><span>Nombre del negocio (aparece en recibos)</span><input name="negocio" value="${esc(S.set.negocio)}"></label><label class="field"><span>Teléfono para comprobantes</span><input name="tel" type="tel" value="${esc(S.set.tel)}"></label><button class="btn pri blk" type="submit">${ico('check')} Guardar</button></form>
+  const el = sheet('Ajustes', `<form id="sf"><label class="field"><span>Nombre del negocio (aparece en recibos)</span><input name="negocio" value="${esc(S.set.negocio)}"></label><label class="field"><span>Teléfono para comprobantes</span><input name="tel" type="tel" value="${esc(S.set.tel)}"></label>
+  <label class="field"><span>PIN de dueño (protege Vender y cambios de inventario)</span><input name="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="Sin PIN = acceso libre" value="${esc(S.set.pin || '')}"></label>
+  <p class="hint">Si dejas el PIN vacío, cualquier persona que tenga la app podrá vender y modificar el inventario.</p><button class="btn pri blk" type="submit">${ico('check')} Guardar</button></form>
   <h3 class="sec"><span>Cuenta y nube</span></h3>${accountHTML()}
   <h3 class="sec"><span>Respaldo</span></h3><p class="hint">Exporta un respaldo de vez en cuando, además de la nube (incluye fotos).</p>
   <div class="btns"><button class="btn" data-k="exp">${ico('dl')} Exportar</button><label class="btn">${ico('share')} Importar<input type="file" accept="application/json" hidden data-k="imp"></label></div>
   <div class="btns" style="margin-top:10px"><button class="btn danger" data-k="wipe">${ico('trash')} Borrar todos los datos</button></div>`);
-  $('#sf', el).addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.target); S.set.negocio = String(f.get('negocio')).trim() || 'GL Money'; S.set.tel = String(f.get('tel')).trim(); S.set.u = Date.now(); await saveMeta(); queue('meta', 'settings', false, S.set.u); closeSheet(el); refreshAll(); toast('Guardado'); });
+  $('#sf', el).addEventListener('submit', async e => { e.preventDefault(); const f = new FormData(e.target); S.set.negocio = String(f.get('negocio')).trim() || 'GL Money'; S.set.tel = String(f.get('tel')).trim(); S.set.pin = String(f.get('pin') || '').trim(); S.set.u = Date.now(); await saveMeta(); queue('meta', 'settings', false, S.set.u); if (!S.set.pin) S.ui.ownerUntil = 0; closeSheet(el); refreshAll(); toast('Guardado'); });
   el.addEventListener('click', async e => {
     const b = e.target.closest('button[data-k]'); if (!b) return;
     if (b.dataset.k === 'exp') {
-      const data = JSON.stringify({ app: 'cobroEmpire', v: 1, at: new Date().toISOString(), clients: S.clients, loans: S.loans, payments: S.payments, notes: S.notes, places: S.places, set: S.set, ruta: S.ruta });
+      const data = JSON.stringify({ app: 'cobroEmpire', v: 2, at: new Date().toISOString(), clients: S.clients, loans: S.loans, payments: S.payments, notes: S.notes, places: S.places, products: S.products, sales: S.sales, expenses: S.expenses, set: S.set, ruta: S.ruta });
       const name = `cobroEmpire-respaldo-${toISO(new Date())}.json`, file = new File([data], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); return; } catch { return; } }
       const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
@@ -690,10 +1006,10 @@ function openSettings() {
     if (b.dataset.k === 'syncnow') { closeSheet(el); syncNow(true); return; }
     if (b.dataset.k === 'login') { closeSheet(el); openAuth(); return; }
     if (b.dataset.k === 'logout') { if (await ask('Se cerrará la sesión en este teléfono. Los datos locales se conservan.', 'Cerrar sesión')) { signOut(); closeSheet(el); refreshAll(); toast('Sesión cerrada'); } return; }
-    if (b.dataset.k === 'wipe' && await ask('Se borrarán TODOS los clientes, créditos, pagos, notas y puntos' + (session() ? ', también en la nube' : '') + '. No se puede deshacer.', 'Borrar todo')) {
-      for (const st of ['clients', 'loans', 'payments', 'notes', 'places']) for (const o of S[st]) queue(st, o.id, true, Date.now());
-      for (const s of ['clients', 'loans', 'payments', 'notes', 'places']) await dbClear(s).catch(() => { });
-      Object.assign(S, { clients: [], loans: [], payments: [], notes: [], places: [], ruta: [] }); await saveMeta(); closeSheet(el); refreshAll(); toast('Datos borrados'); syncNow();
+    if (b.dataset.k === 'wipe' && await ask('Se borrarán TODOS los clientes, créditos, pagos, notas, puntos, inventario, ventas y gastos' + (session() ? ', también en la nube' : '') + '. No se puede deshacer.', 'Borrar todo')) {
+      for (const st of SYNC_STORES) for (const o of S[st]) queue(st, o.id, true, Date.now());
+      for (const s of SYNC_STORES) await dbClear(s).catch(() => { });
+      Object.assign(S, { clients: [], loans: [], payments: [], notes: [], places: [], products: [], sales: [], expenses: [], ruta: [] }); await saveMeta(); closeSheet(el); refreshAll(); toast('Datos borrados'); syncNow();
     }
   });
   $('[data-k="imp"]', el).addEventListener('change', async e => {
@@ -701,8 +1017,8 @@ function openSettings() {
     try {
       const d = JSON.parse(await f.text()); if (d.app !== 'cobroEmpire') throw 0;
       if (!await ask('Esto reemplazará los datos actuales por el respaldo.', 'Importar')) return;
-      for (const s of ['clients', 'loans', 'payments', 'notes', 'places']) { await dbClear(s).catch(() => { }); S[s] = d[s] || []; for (const o of S[s]) { o.u = Date.now(); await dbPut(s, o); queue(s, o.id, false, o.u); } }
-      S.set = { negocio: 'GL Money', tel: '', ...(d.set || {}) }; S.ruta = d.ruta || []; await saveMeta(); closeSheet(el); refreshAll(); toast('Respaldo importado');
+      for (const s of SYNC_STORES) { await dbClear(s).catch(() => { }); S[s] = d[s] || []; for (const o of S[s]) { o.u = Date.now(); await dbPut(s, o); queue(s, o.id, false, o.u); } }
+      S.set = { negocio: 'GL Money', tel: '', pin: '', ...(d.set || {}) }; S.ruta = d.ruta || []; S.ui.ownerUntil = 0; await saveMeta(); closeSheet(el); refreshAll(); toast('Respaldo importado');
     } catch { toast('Archivo no válido'); }
   });
 }
@@ -710,19 +1026,60 @@ function openSettings() {
 /* ============ navegación y acciones ============ */
 function refreshAll() {
   renderHome(); renderLoans(); renderNotes(); refreshMap();
+  if (isInvTab(S.ui.tab)) renderInv();
   $$('.sheet-wrap[data-live]:not(.closing)').forEach(e => e._r && e._r());
 }
+const DOCK_COBROS = [['home', 'home', 'Inicio'], ['loans', 'wallet', 'Créditos'], ['map', 'map', 'Mapa'], ['notes', 'note', 'Notas']];
+const DOCK_INV = [['inv-res', 'box', 'Resumen'], ['inv-prod', 'shirt', 'Productos'], ['inv-vent', 'cart', 'Ventas'], ['inv-gast', 'coin', 'Gastos']];
+function renderDock() {
+  const defs = S.ui.mode === 'inv' ? DOCK_INV : DOCK_COBROS;
+  $$('#dockPill button[data-t]').forEach((b, i) => {
+    const [t, ic, label] = defs[i];
+    b.dataset.t = t; b.innerHTML = `<span class="ico" data-i="${ic}"></span><b>${label}</b>`;
+  });
+  $('#modeBtn').innerHTML = `<span class="ico" data-i="${S.ui.mode === 'inv' ? 'wallet' : 'box'}"></span><b>${S.ui.mode === 'inv' ? 'Cobros' : 'Inventario'}</b>`;
+  $$('[data-i]').forEach(e => { e.innerHTML = `<svg viewBox="0 0 24 24">${IC[e.dataset.i] || ''}</svg>`; });
+}
 function setTab(t) {
-  S.ui.tab = t;
-  $$('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + t));
-  $$('#dockPill button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (!t) return;
+  S.ui.mode = isInvTab(t) ? 'inv' : 'cobros';
+  S.ui.tab = t; if (isInvTab(t)) S.ui.invTab = t;
+  renderDock();
+  $$('.view').forEach(v => v.classList.toggle('on', v.id === (isInvTab(t) ? 'v-inv' : 'v-' + t)));
+  $$('#dockPill button[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (isInvTab(t)) renderInv();
   if (t === 'map') { initMap(); setTimeout(() => map.invalidateSize(), 60); }
   window.scrollTo(0, 0);
 }
 const A = {
   tab: d => setTab(d.t),
   close: (d, e) => closeSheet(e.target.closest('.sheet-wrap')),
-  fab: () => { const t = S.ui.tab; if (t === 'notes') openNoteForm(); else if (t === 'map') openPlaceForm(); else openLoanForm(); },
+  fab: () => {
+    const t = S.ui.tab;
+    if (isInvTab(t)) {
+      if (t === 'inv-prod') return ownerGate(() => openProductForm());
+      if (t === 'inv-gast') return ownerGate(() => openExpenseForm());
+      return ownerGate(() => openSaleForm());
+    }
+    if (t === 'notes') openNoteForm(); else if (t === 'map') openPlaceForm(); else openLoanForm();
+  },
+  mode: () => setTab(S.ui.mode === 'inv' ? 'home' : 'inv-res'),
+  'open-inv': () => setTab('inv-res'),
+  owner: () => {
+    if (!String(S.set.pin || '').trim()) return toast('Configura un PIN en Ajustes para proteger las ventas');
+    if (ownerActive()) { S.ui.ownerUntil = 0; renderInv(); return toast('Modo dueño bloqueado'); }
+    ownerGate(() => { renderInv(); toast('Modo dueño activo'); });
+  },
+  vender: () => ownerGate(() => openSaleForm()),
+  'new-prod': () => ownerGate(() => openProductForm()),
+  'new-exp': () => ownerGate(() => openExpenseForm()),
+  prod: d => openProduct(d.id), sale: d => openSale(d.id), exp: d => openExpense(d.id),
+  'edit-prod': d => ownerGate(() => openProductForm(d.id)),
+  'del-prod': async d => ownerGate(async () => { if (await ask('¿Eliminar esta prenda del inventario?')) { await remove('products', d.id); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); toast('Prenda eliminada'); } }),
+  'edit-exp': d => ownerGate(() => openExpenseForm(d.id)),
+  'del-exp': async d => ownerGate(async () => { if (await ask('¿Eliminar este gasto?')) { await remove('expenses', d.id); $$('.sheet-wrap').forEach(closeSheet); refreshAll(); toast('Gasto eliminado'); } }),
+  'pay-sale': d => markSalePaid(d.id), 'del-sale': d => deleteSale(d.id), 'share-sale': d => shareSale(d.id),
+  'inv-cat': d => { S.ui.invCat = d.c || 'todos'; S.ui.invQ = ''; setTab('inv-prod'); },
   loan: d => openLoan(d.id), client: d => openClient(d.id),
   pay: d => openPayForm(d.id), receipt: d => openReceipt(d.id, d.p),
   'edit-loan': d => openLoanForm(d.id), 'edit-client': d => openClientForm(d.id),
@@ -786,7 +1143,7 @@ function queue(store, id, del, u) { S.sync.outbox[store + '/' + id] = { store, i
 const syncLabel = () => { const n = Object.keys(S.sync.outbox).length, st = S.sync.state; const t = st === 'nosession' ? 'sin nube' : st === 'syncing' ? 'sincronizando…' : st === 'offline' ? 'sin conexión' : st === 'error' ? 'error de nube' : n ? n + ' pendiente' + (n > 1 ? 's' : '') : 'en la nube ✓'; return ` · <span style="opacity:.9">${t}</span>`; };
 const getLocal = (st, id) => st === 'meta' ? (id === 'settings' ? S.set : null) : S[st].find(x => x.id === id);
 async function putLocal(st, id, data, u) {
-  if (st === 'meta') { S.set = { negocio: 'GL Money', tel: '', ...data, id: 'settings', u }; await dbPut('meta', S.set); return; }
+  if (st === 'meta') { S.set = { negocio: 'GL Money', tel: '', pin: '', ...data, id: 'settings', u }; await dbPut('meta', S.set); return; }
   data.u = u; const a = S[st], i = a.findIndex(x => x.id === id); if (i >= 0) a[i] = data; else a.push(data); await dbPut(st, data);
 }
 async function delLocal(st, id) { if (st === 'meta') return; S[st] = S[st].filter(x => x.id !== id); await dbDel(st, id); }
@@ -804,7 +1161,7 @@ async function syncNow(manual) {
       if (rows.length < 1000) break;
     }
     // 2) lo local que no está en la nube se sube
-    for (const st of ['clients', 'loans', 'payments', 'notes', 'places']) for (const o of S[st]) { const k = st + '/' + o.id; if (!remote.has(k) && !S.sync.outbox[k]) S.sync.outbox[k] = { store: st, id: o.id, del: false, u: o.u || Date.now() }; }
+    for (const st of SYNC_STORES) for (const o of S[st]) { const k = st + '/' + o.id; if (!remote.has(k) && !S.sync.outbox[k]) S.sync.outbox[k] = { store: st, id: o.id, del: false, u: o.u || Date.now() }; }
     if (!remote.has('meta/settings') && !S.sync.outbox['meta/settings']) S.sync.outbox['meta/settings'] = { store: 'meta', id: 'settings', del: false, u: S.set.u || Date.now() };
     // 3) si la nube es más nueva, gana la nube
     for (const [k, it] of Object.entries(S.sync.outbox)) { const r = remote.get(k); if (r && r.ms > it.u) delete S.sync.outbox[k]; }
@@ -885,13 +1242,13 @@ async function boot() {
   $$('[data-i]').forEach(e => { e.innerHTML = `<svg viewBox="0 0 24 24">${IC[e.dataset.i]}</svg>`; });
   try { db = await openDB(); } catch (e) { console.warn(e); toast('Sin almacenamiento persistente'); }
   try {
-    for (const s of ['clients', 'loans', 'payments', 'notes', 'places']) S[s] = await dbAll(s) || [];
-    for (const m of await dbAll('meta') || []) { if (m.id === 'settings') S.set = { negocio: 'GL Money', tel: '', ...m }; if (m.id === 'ruta') S.ruta = m.keys || []; if (m.id === 'sync') S.sync = { ...S.sync, outbox: m.outbox || {}, last: m.last || null }; }
+    for (const s of SYNC_STORES) S[s] = await dbAll(s) || [];
+    for (const m of await dbAll('meta') || []) { if (m.id === 'settings') S.set = { negocio: 'GL Money', tel: '', pin: '', ...m }; if (m.id === 'ruta') S.ruta = m.keys || []; if (m.id === 'sync') S.sync = { ...S.sync, outbox: m.outbox || {}, last: m.last || null }; }
   } catch (e) { console.error(e); }
   for (const p of S.payments.filter(p => !p.recibo)) { p.recibo = genReceiptId(new Date(p.fecha)); p.u = Date.now(); await dbPut('payments', p).catch(() => { }); queue('payments', p.id, false, p.u); }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
   S.sync.state = session() ? 'idle' : 'nosession';
-  renderHome(); renderLoans(); renderNotes();
+  renderHome(); renderLoans(); renderNotes(); renderInv(); renderDock();
   if (!session() && !lsGet('gl_skip')) openAuth(); else syncNow();
   addEventListener('online', () => syncNow());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });

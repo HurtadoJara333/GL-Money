@@ -1,7 +1,7 @@
 {
   "name": "GL Money",
   "short_name": "GL Money",
-  "description": "Gestión de cobros, rutas y notas",
+  "description": "Gestión de cobros, rutas, notas e inventario",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

@@ -1,6 +1,7 @@
-const V = 'ce-v5';
+const V = 'ce-v9';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json',
   './vendor/leaflet.js', './vendor/leaflet.css',
+  './vendor/fonts/oswald-latin.woff2', './vendor/fonts/oswald-latin-ext.woff2',
   './vendor/images/marker-icon.png', './vendor/images/layers.png',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/logo.jpg'];
 
