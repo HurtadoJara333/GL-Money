@@ -300,25 +300,66 @@ function bindLoc(root, st) {
     box.outerHTML = locHTML(st);
   });
 }
-const tileURL = () => `https://{s}.basemaps.cartocdn.com/${matchMedia('(prefers-color-scheme: dark)').matches ? 'dark_all' : 'light_all'}/{z}/{x}/{y}{r}.png`;
-const TILE_OPT = { subdomains: 'abcd', maxZoom: 19, attribution: '© OpenStreetMap · © CARTO' };
-const pinIcon = (cls, num) => L.divIcon({ className: '', html: `<div class="pin ${cls}"><i></i><b>${num || ''}</b></div>`, iconSize: [36, 36], iconAnchor: [18, 34], popupAnchor: [0, -32] });
+/* ============ Google Maps ============ */
+const GM_KEY = window.GMAPS_KEY || '';
+let gm = null, gmPromise = null, mapLoading = false;
+const GM_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#121116' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#cbb172' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#050505' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#080808' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#17140e' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2b2519' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3b3120' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] }
+];
+const GM_COLORS = { ok: '#d4af37', bad: '#ff5a5f', paid: '#7a6a45', pt: '#e8c45c' };
+function loadGM() {
+  if (gm && window.google && google.maps) return Promise.resolve(google.maps);
+  if (gmPromise) return gmPromise;
+  gmPromise = new Promise((resolve, reject) => {
+    if (!GM_KEY) return reject(new Error('Falta la clave de Google Maps'));
+    if (window.google && google.maps) return resolve(google.maps);
+    window.__gmReady = () => resolve(google.maps);
+    const s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(GM_KEY) + '&v=weekly&loading=async&callback=__gmReady';
+    s.async = true;
+    s.onerror = () => reject(new Error('No se pudo cargar Google Maps'));
+    document.head.appendChild(s);
+  });
+  return gmPromise;
+}
+const gmSvg = svg => 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+const gmPinIcon = (color, num) => ({
+  url: gmSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><path d="M18 35S31 23.4 31 14A13 13 0 0 0 5 14c0 9.4 13 21 13 21z" fill="${color}" stroke="#fff3c4" stroke-width="2"/><circle cx="18" cy="14" r="7.5" fill="rgba(0,0,0,.28)"/></svg>`),
+  scaledSize: new google.maps.Size(36, 36), anchor: new google.maps.Point(18, 34), labelOrigin: new google.maps.Point(18, 14)
+});
+const gmMeIcon = () => ({
+  url: gmSvg('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="#7a5a0f" stroke="#fff3c4" stroke-width="3"/><circle cx="10" cy="10" r="2.5" fill="#fff"/></svg>'),
+  scaledSize: new google.maps.Size(20, 20), anchor: new google.maps.Point(10, 10)
+});
+const gmPos = p => ({ lat: p.lat, lng: p.lng });
 
-function pickLocation(init) {
+async function pickLocation(init) {
+  try { await loadGM(); } catch (e) { toast(e.message); return null; }
+  const el = document.createElement('div'); el.className = 'picker';
+  el.innerHTML = `<div id="pmap"></div><div class="top2 glass">Mueve el mapa y centra el pin</div><div class="cross"><div class="pin pt"><i></i></div></div><div class="bar2"><button class="btn glass" data-k="x">Cancelar</button><button class="btn glass" data-k="gps">${ico('locate')}</button><button class="btn pri" style="flex:1.4" data-k="ok">Confirmar</button></div>`;
+  document.body.append(el);
+  const start = init || (lastCenter ? { lat: lastCenter[0], lng: lastCenter[1] } : { lat: 4.711, lng: -74.072 });
+  const m = new google.maps.Map($('#pmap', el), {
+    center: gmPos(start), zoom: init ? 17 : 14, styles: GM_STYLE,
+    disableDefaultUI: true, clickableIcons: false, gestureHandling: 'greedy'
+  });
+  if (!init) getPos().then(p => { m.setCenter(gmPos(p)); m.setZoom(17); }).catch(() => { });
   return new Promise(res => {
-    const el = document.createElement('div'); el.className = 'picker';
-    el.innerHTML = `<div id="pmap"></div><div class="top2 glass">Mueve el mapa y centra el pin</div><div class="cross"><div class="pin pt"><i></i></div></div><div class="bar2"><button class="btn glass" data-k="x">Cancelar</button><button class="btn glass" data-k="gps">${ico('locate')}</button><button class="btn pri" style="flex:1.4" data-k="ok">Confirmar</button></div>`;
-    document.body.append(el);
-    const m = L.map($('#pmap', el), { zoomControl: false }).setView(init ? [init.lat, init.lng] : (lastCenter || [4.711, -74.072]), init ? 17 : 14);
-    L.tileLayer(tileURL(), TILE_OPT).addTo(m);
-    if (!init) getPos().then(p => m.setView([p.lat, p.lng], 17)).catch(() => { });
     el.addEventListener('click', async e => {
       const b = e.target.closest('[data-k]'); if (!b) return;
-      if (b.dataset.k === 'gps') { try { const p = await getPos(); m.setView([p.lat, p.lng], 18); } catch { toast('No se pudo obtener el GPS'); } return; }
-      const c = m.getCenter(); m.remove(); el.remove();
-      res(b.dataset.k === 'ok' ? { lat: c.lat, lng: c.lng } : null);
+      if (b.dataset.k === 'gps') { try { const p = await getPos(); m.setCenter(gmPos(p)); m.setZoom(18); } catch { toast('No se pudo obtener el GPS'); } return; }
+      const c = m.getCenter(); el.remove();
+      res(b.dataset.k === 'ok' ? { lat: c.lat(), lng: c.lng() } : null);
     });
-    setTimeout(() => m.invalidateSize(), 50);
+    setTimeout(() => google.maps.event.trigger(m, 'resize'), 50);
   });
 }
 
@@ -878,7 +919,7 @@ function openExpense(id) {
 }
 
 /* ============ mapa y rutas ============ */
-let map, layer, routeLine, meMarker, lastCenter = null;
+let map, infoWin, markers = [], routeLine, meMarker, lastCenter = null;
 function stopData() {
   const out = [];
   for (const cl of S.clients) {
@@ -894,32 +935,65 @@ function stopData() {
 const stopByKey = k => stopData().find(s => s.key === k);
 const hav = (a, b) => { const R = 6371, r = x => x * Math.PI / 180, dl = r(b.lat - a.lat), dn = r(b.lng - a.lng); const q = Math.sin(dl / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(q)); };
 
-function initMap() {
-  if (map) return;
-  map = L.map('map', { zoomControl: false, attributionControl: true }).setView([4.711, -74.072], 12);
-  L.tileLayer(tileURL(), TILE_OPT).addTo(map);
-  layer = L.layerGroup().addTo(map);
-  refreshMap(true);
-  getPos().then(p => { lastCenter = [p.lat, p.lng]; setMe(p); if (!stopData().length) map.setView([p.lat, p.lng], 15); }).catch(() => { });
+async function initMap() {
+  if (map || mapLoading) return;
+  mapLoading = true;
+  try {
+    await loadGM(); gm = google.maps;
+    map = new google.maps.Map($('#map'), {
+      center: { lat: 4.711, lng: -74.072 }, zoom: 12, styles: GM_STYLE,
+      clickableIcons: false, gestureHandling: 'greedy',
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: false
+    });
+    infoWin = new google.maps.InfoWindow();
+    refreshMap(true);
+    getPos().then(p => {
+      lastCenter = [p.lat, p.lng]; setMe(p);
+      if (!stopData().length) { map.setCenter(gmPos(p)); map.setZoom(15); }
+    }).catch(() => { });
+  } catch (e) {
+    console.error(e); toast('Google Maps no disponible: ' + e.message);
+    $('#map').innerHTML = '<div class="map-error">No se pudo cargar Google Maps. Revisa la conexión y la clave de la API.</div>';
+  } finally { mapLoading = false; }
 }
 function setMe(p) {
-  if (!map) return;
-  if (meMarker) meMarker.setLatLng([p.lat, p.lng]);
-  else meMarker = L.marker([p.lat, p.lng], { icon: L.divIcon({ className: '', html: '<div class="me"></div>', iconSize: [18, 18] }), interactive: false, zIndexOffset: -100 }).addTo(map);
+  if (!map || !gm) return;
+  const pos = gmPos(p);
+  if (meMarker) meMarker.setPosition(pos);
+  else meMarker = new gm.Marker({ position: pos, map, clickable: false, zIndex: 1, icon: gmMeIcon() });
 }
 function refreshMap(fit) {
-  if (!map) return;
-  layer.clearLayers(); if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (!map || !gm) return;
+  if (infoWin) infoWin.close();
+  markers.forEach(m => m.setMap(null)); markers = [];
+  if (routeLine) { routeLine.setMap(null); routeLine = null; }
   S.ruta = S.ruta.filter(k => stopByKey(k));
   const sd = stopData();
   sd.forEach(s => {
     const n = S.ruta.indexOf(s.key) + 1;
-    const mk = L.marker([s.lat, s.lng], { icon: pinIcon(s.st, n || '') }).addTo(layer);
-    mk.bindPopup(`<div class="pp"><b>${esc(s.name)}</b><span>${esc(s.sub)}</span><div class="btns"><button class="btn" data-a="pp-open" data-k="${s.key}">Abrir</button><button class="btn" data-a="route-toggle" data-k="${s.key}">${n ? 'Quitar' : '+ Ruta'}</button><button class="btn" data-a="nav" data-k="${s.key}">Ir</button></div></div>`);
+    const mk = new gm.Marker({
+      position: gmPos(s), map, title: s.name,
+      icon: gmPinIcon(GM_COLORS[s.st] || GM_COLORS.ok, n || ''),
+      label: n ? { text: String(n), color: '#1a1203', fontSize: '13px', fontWeight: 'bold' } : null
+    });
+    mk.addListener('click', () => {
+      infoWin.setContent(`<div class="pp"><b>${esc(s.name)}</b><span>${esc(s.sub)}</span><div class="btns"><button class="btn" data-a="pp-open" data-k="${s.key}">Abrir</button><button class="btn" data-a="route-toggle" data-k="${s.key}">${n ? 'Quitar' : '+ Ruta'}</button><button class="btn" data-a="nav" data-k="${s.key}">Ir</button></div></div>`);
+      infoWin.open(map, mk);
+    });
+    markers.push(mk);
   });
-  const pts = S.ruta.map(stopByKey).filter(Boolean).map(s => [s.lat, s.lng]);
-  if (pts.length > 1) routeLine = L.polyline(pts, { color: '#5ac8fa', weight: 5, opacity: .9, dashArray: '2 10', lineCap: 'round' }).addTo(map);
-  if (fit && sd.length) map.fitBounds(L.latLngBounds(sd.map(s => [s.lat, s.lng])).pad(0.25), { maxZoom: 16 });
+  const pts = S.ruta.map(stopByKey).filter(Boolean).map(gmPos);
+  if (pts.length > 1) {
+    routeLine = new gm.Polyline({
+      path: pts, map, strokeColor: '#e8c45c', strokeOpacity: .95, strokeWeight: 5,
+      icons: [{ icon: { path: 'M 0,0 0,10' }, repeat: '0 14' }]
+    });
+  }
+  if (fit && sd.length) {
+    const b = new gm.LatLngBounds(); sd.forEach(s => b.extend(gmPos(s)));
+    map.fitBounds(b, { top: 70, bottom: 130, left: 40, right: 40 });
+    gm.event.addListenerOnce(map, 'idle', () => { if (map.getZoom() > 16) map.setZoom(16); });
+  }
   renderMapTop(); renderRoute();
 }
 function renderMapTop() {
@@ -1048,7 +1122,7 @@ function setTab(t) {
   $$('.view').forEach(v => v.classList.toggle('on', v.id === (isInvTab(t) ? 'v-inv' : 'v-' + t)));
   $$('#dockPill button[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   if (isInvTab(t)) renderInv();
-  if (t === 'map') { initMap(); setTimeout(() => map.invalidateSize(), 60); }
+  if (t === 'map') { initMap(); setTimeout(() => { if (map && gm) gm.event.trigger(map, 'resize'); }, 60); }
   window.scrollTo(0, 0);
 }
 const A = {
@@ -1093,9 +1167,9 @@ const A = {
   filter: d => { S.ui.filter = d.f; renderLoanList(); },
   settings: openSettings, verify: openVerify,
   img: d => { const lb = document.createElement('div'); lb.className = 'lightbox'; lb.innerHTML = `<img src="${d.src}" alt="">`; lb.onclick = () => lb.remove(); document.body.append(lb); },
-  me: async () => { try { const p = await getPos(); setMe(p); map.setView([p.lat, p.lng], 16); } catch { toast('No se pudo obtener el GPS'); } },
-  'pp-open': d => { const s = stopByKey(d.k); map.closePopup(); if (!s) return; if (s.t === 'c') { const l = S.loans.find(x => x.clientId === s.id); l ? openLoan(l.id) : openClient(s.id); } else openPlace(s.id); },
-  'route-toggle': d => { setRuta(S.ruta.includes(d.k) ? S.ruta.filter(k => k !== d.k) : [...S.ruta, d.k]); if (map) map.closePopup(); toast(S.ruta.includes(d.k) ? 'Añadido a la ruta' : 'Quitado de la ruta'); $$('.sheet-wrap[data-live]').forEach(e => e._r && e._r()); },
+  me: async () => { try { const p = await getPos(); setMe(p); if (map && gm) { map.setCenter(gmPos(p)); map.setZoom(16); } } catch { toast('No se pudo obtener el GPS'); } },
+  'pp-open': d => { const s = stopByKey(d.k); if (infoWin) infoWin.close(); if (!s) return; if (s.t === 'c') { const l = S.loans.find(x => x.clientId === s.id); l ? openLoan(l.id) : openClient(s.id); } else openPlace(s.id); },
+  'route-toggle': d => { setRuta(S.ruta.includes(d.k) ? S.ruta.filter(k => k !== d.k) : [...S.ruta, d.k]); if (infoWin) infoWin.close(); toast(S.ruta.includes(d.k) ? 'Añadido a la ruta' : 'Quitado de la ruta'); $$('.sheet-wrap[data-live]').forEach(e => e._r && e._r()); },
   'route-del': d => setRuta(S.ruta.filter(k => k !== d.k)),
   'route-up': d => { const i = +d.i; if (i > 0) { const r = [...S.ruta];[r[i - 1], r[i]] = [r[i], r[i - 1]]; setRuta(r); } },
   'route-down': d => { const i = +d.i; if (i < S.ruta.length - 1) { const r = [...S.ruta];[r[i + 1], r[i]] = [r[i], r[i + 1]]; setRuta(r); } },

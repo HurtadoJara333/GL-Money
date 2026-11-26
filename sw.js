@@ -1,5 +1,5 @@
-const V = 'ce-v9';
-const SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json',
+const V = 'ce-v11';
+const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './manifest.json',
   './vendor/leaflet.js', './vendor/leaflet.css',
   './vendor/fonts/oswald-latin.woff2', './vendor/fonts/oswald-latin-ext.woff2',
   './vendor/images/marker-icon.png', './vendor/images/layers.png',
